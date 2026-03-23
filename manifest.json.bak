@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "SplitNest Extension",
+  "version": "1.0.0",
+  "description": "Manage your shared finances directly from your browser.",
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "action": {
+    "default_popup": "index.html",
+    "default_icon": "icon128.png"
+  },
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://*.firebaseio.com/*",
+    "https://*.googleapis.com/*",
+    "https://*.firebaseapp.com/*"
+  ]
+}

@@ -1,0 +1,592 @@
+import React, { useState, useEffect } from 'react';
+import { StyleSheet, FlatList, Pressable, ActivityIndicator, ScrollView } from 'react-native';
+import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
+import { Text, View } from '@/components/Themed';
+import { useUserStore } from '@/src/store/useUserStore';
+import { db } from '@/src/services/firebaseConfig';
+import { doc, getDoc, collection, query, where, getDocs, orderBy, addDoc } from 'firebase/firestore';
+import Colors from '@/constants/Colors';
+import { useColorScheme } from '@/components/useColorScheme';
+import { ArrowLeft, MessageSquare, Receipt, Plus, TrendingUp, Filter, Users, UserPlus, X, Wallet, CreditCard, Landmark, Smartphone, Download, Contact } from 'lucide-react-native';
+import { findUserByEmail, findUserByPhone, createGhostUser, addMemberToGroup } from '@/src/services/expenseService';
+import { getPhoneContacts, MobileContact } from '@/src/services/contactService';
+import { generateGroupReport } from '@/src/services/pdfService';
+import { Modal, TextInput, FlatList as RNFlatList } from 'react-native';
+import Animated, { FadeInUp } from 'react-native-reanimated';
+
+export default function GroupDetailScreen() {
+  const { id } = useLocalSearchParams();
+  const [group, setGroup] = useState<any>(null);
+  const [expenses, setExpenses] = useState<any[]>([]);
+  const [members, setMembers] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [addMemberModalVisible, setAddMemberModalVisible] = useState(false);
+  const [memberEmail, setMemberEmail] = useState('');
+  const [addingMember, setAddingMember] = useState(false);
+  const [phoneContacts, setPhoneContacts] = useState<MobileContact[]>([]);
+  const [showContacts, setShowContacts] = useState(false);
+  
+  const { user } = useUserStore();
+  const colorScheme = useColorScheme() ?? 'light';
+  const colors = Colors[colorScheme];
+  const router = useRouter();
+
+  useEffect(() => {
+    if (id) loadData();
+  }, [id]);
+
+  const loadData = async () => {
+    try {
+      const gDoc = await getDoc(doc(db, 'groups', id as string));
+      if (gDoc.exists()) {
+        const groupData = gDoc.data();
+        setGroup(groupData);
+        const memberData: any[] = [];
+        for (const mId of groupData.members) {
+          const mDoc = await getDoc(doc(db, 'users', mId));
+          if (mDoc.exists()) memberData.push({ id: mId, ...mDoc.data() });
+        }
+        setMembers(memberData);
+      }
+      const q = query(collection(db, 'expenses'), where('groupId', '==', id), orderBy('date', 'desc'));
+      const qSnap = await getDocs(q);
+      setExpenses(qSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const renderExpense = ({ item, index }: { item: any, index: number }) => (
+    <Animated.View entering={FadeInUp.delay(index * 100)} style={[styles.expenseCard, { backgroundColor: colors.cardBg, borderColor: colors.border }]}>
+      <View style={[styles.expenseDateContainer, { backgroundColor: colors.primary + '10' }]}>
+        <Text style={[styles.expenseDateMonth, { color: colors.primary }]}>{new Date(item.date.toDate()).toLocaleString('default', { month: 'short' })}</Text>
+        <Text style={styles.expenseDateDay}>{new Date(item.date.toDate()).getDate()}</Text>
+      </View>
+      <View style={styles.expenseInfo}>
+        <Text style={styles.expenseTitle}>{item.description}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'transparent' }}>
+          {item.paymentMethod === 'Cash' && <Wallet size={12} color={colors.icon} style={{ marginRight: 4 }} />}
+          {item.paymentMethod === 'Credit Card' && <CreditCard size={12} color={colors.icon} style={{ marginRight: 4 }} />}
+          {item.paymentMethod === 'UPI' && <Smartphone size={12} color={colors.icon} style={{ marginRight: 4 }} />}
+          <Text style={[styles.expenseSub, { color: colors.icon }]}>
+            {item.paidBy === user?.uid ? 'You paid' : 'Someone paid'} ₹{item.amount}
+          </Text>
+        </View>
+      </View>
+      <View style={styles.expenseStatus}>
+        <Text style={[styles.expenseStatusText, { color: item.paidBy === user?.uid ? colors.gain : colors.debt }]}>
+          {item.paidBy === user?.uid ? 'You are owed' : 'You owe'}
+        </Text>
+        <Text style={[styles.expenseStatusAmount, { color: item.paidBy === user?.uid ? colors.gain : colors.debt }]}>
+          ₹{item.amount / (members.length || 2)}
+        </Text>
+      </View>
+    </Animated.View>
+  );
+
+  const handleSettleUp = async () => {
+    setLoading(true);
+    try {
+      // Create a settlement expense
+      const settlementData = {
+        amount: 1200, // Example amount
+        description: 'Settled Up',
+        groupId: id,
+        category: 'Settlement',
+        paidBy: user!.uid,
+        date: new Date(),
+        type: 'settlement'
+      };
+      await addDoc(collection(db, 'expenses'), settlementData);
+      loadData();
+      alert('Balance Settled!');
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDownloadReport = async () => {
+    try {
+      await generateGroupReport(group?.name || 'Group', members, expenses);
+    } catch (err) {
+      alert('Failed to generate report');
+    }
+  };
+
+  const handleAddMember = async () => {
+    if (!memberEmail) return;
+    setAddingMember(true);
+    try {
+      let foundUser = await findUserByEmail(memberEmail);
+      if (!foundUser && memberEmail.match(/^\d+$/)) {
+        foundUser = await findUserByPhone(memberEmail);
+      }
+
+      if (foundUser) {
+        if (group.members.includes(foundUser.id)) {
+          alert('User is already a member!');
+        } else {
+          await addMemberToGroup(id as string, foundUser.id);
+          setAddMemberModalVisible(false);
+          setMemberEmail('');
+          loadData();
+        }
+      } else {
+        // Create a Ghost User
+        const ghost = await createGhostUser(memberEmail.split('@')[0], memberEmail);
+        await addMemberToGroup(id as string, ghost.id);
+        setAddMemberModalVisible(false);
+        setMemberEmail('');
+        loadData();
+        alert(`Invite sent to ${memberEmail}! They can see this once they join.`);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setAddingMember(false);
+    }
+  };
+
+  const loadPhoneContacts = async () => {
+    setLoading(true);
+    const contacts = await getPhoneContacts();
+    setPhoneContacts(contacts);
+    setShowContacts(true);
+    setLoading(false);
+  };
+
+  const handleAddContact = async (contact: MobileContact) => {
+    setAddingMember(true);
+    try {
+      let foundUser = await findUserByPhone(contact.phoneNumber || '');
+      if (!foundUser) {
+        foundUser = await createGhostUser(contact.name, contact.phoneNumber || '');
+      }
+      
+      if (group.members.includes(foundUser.id)) {
+        alert('User is already a member!');
+      } else {
+        await addMemberToGroup(id as string, foundUser.id);
+        setShowContacts(false);
+        setAddMemberModalVisible(false);
+        loadData();
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setAddingMember(false);
+    }
+  };
+
+  if (loading) return <View style={styles.loading}><ActivityIndicator size="large" color={colors.primary} /></View>;
+
+  return (
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
+      <Stack.Screen options={{ 
+        title: group?.name || 'Group', 
+        headerShown: true,
+        headerLeft: () => (
+          <Pressable onPress={() => router.back()} style={{ marginRight: 16 }}>
+            <ArrowLeft color={colors.text} size={24} />
+          </Pressable>
+        ),
+        headerRight: () => (
+          <Pressable onPress={() => router.push(`/group/${id}/chat`)}>
+            <MessageSquare color={colors.primary} size={24} style={{ marginRight: 16 }} />
+          </Pressable>
+        )
+      }} />
+
+      {/* Group Balance Header */}
+      <View style={[styles.balanceSection, { borderBottomColor: colors.border }]}>
+        <View style={styles.totalRow}>
+          <View style={styles.totalItem}>
+            <Text style={[styles.totalLabel, { color: colors.icon }]}>Group Balance</Text>
+            <Text style={styles.totalValue}>₹2,500</Text>
+          </View>
+          <Pressable onPress={handleSettleUp} style={[styles.settleButton, { backgroundColor: colors.primary }]}>
+            <Text style={styles.settleText}>Settle Up</Text>
+          </Pressable>
+        </View>
+        
+        <View style={styles.debtTiles}>
+          <View style={[styles.debtTile, { backgroundColor: colors.cardBg, borderColor: colors.border }]}>
+            <TrendingUp size={16} color={colors.gain} />
+            <Text style={[styles.debtTileText, { color: colors.gain }]}>You are owed ₹1,200</Text>
+          </View>
+          <Pressable onPress={handleDownloadReport} style={[styles.debtTile, { backgroundColor: colors.cardBg, borderColor: colors.border, marginLeft: 10 }]}>
+            <Download size={16} color={colors.primary} />
+            <Text style={[styles.debtTileText, { color: colors.primary }]}>Report</Text>
+          </Pressable>
+        </View>
+      </View>
+
+      <FlatList
+        data={expenses}
+        renderItem={renderExpense}
+        keyExtractor={(item) => item.id}
+        contentContainerStyle={styles.listContent}
+        ListHeaderComponent={
+          <View style={styles.listHeaderContainer}>
+            <View style={styles.membersSection}>
+              <Text style={[styles.listTitle, { color: colors.icon, marginBottom: 12 }]}>Group Members</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexDirection: 'row', backgroundColor: 'transparent' }}>
+                <Pressable 
+                  onPress={() => setAddMemberModalVisible(true)}
+                  style={[styles.memberCard, { backgroundColor: colors.primary + '10', borderColor: colors.primary, borderStyle: 'dashed' }]}
+                >
+                  <UserPlus color={colors.primary} size={20} />
+                  <Text style={[styles.memberName, { color: colors.primary, fontSize: 12, marginTop: 4 }]}>Add New</Text>
+                </Pressable>
+                {members.map((m) => (
+                  <View key={m.id} style={styles.memberCard}>
+                    <View style={[styles.memberAvatar, { backgroundColor: colors.secondary + '20' }]}>
+                      <Text style={{ fontWeight: 'bold', color: colors.secondary }}>{m.displayName[0]}</Text>
+                    </View>
+                    <Text numberOfLines={1} style={[styles.memberName, { color: colors.text, fontSize: 12, marginTop: 4 }]}>
+                      {m.id === user?.uid ? 'You' : `${m.displayName}${m.isGhost ? ' (Guest)' : ''}`}
+                    </Text>
+                  </View>
+                ))}
+              </ScrollView>
+            </View>
+
+            <View style={styles.listHeader}>
+              <Text style={[styles.listTitle, { color: colors.icon }]}>Recent Expenses</Text>
+              <Filter size={20} color={colors.icon} />
+            </View>
+          </View>
+        }
+        ListEmptyComponent={
+          <View style={styles.emptyState}>
+            <Receipt size={48} color={colors.icon} style={{ opacity: 0.3, marginBottom: 16 }} />
+            <Text style={[styles.emptyText, { color: colors.icon }]}>No expenses yet. Tap "+" to start sharing!</Text>
+          </View>
+        }
+      />
+
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={addMemberModalVisible}
+        onRequestClose={() => setAddMemberModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: colors.background }]}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Add Member by Email</Text>
+              <Pressable onPress={() => setAddMemberModalVisible(false)}>
+                <X color={colors.text} size={24} />
+              </Pressable>
+            </View>
+            <View style={styles.modalBody}>
+              {!showContacts ? (
+                <>
+                  <TextInput
+                    style={[styles.input, { color: colors.text, borderColor: colors.border }]}
+                    placeholder="Enter email or phone number"
+                    placeholderTextColor={colors.icon}
+                    value={memberEmail}
+                    onChangeText={setMemberEmail}
+                    autoCapitalize="none"
+                    autoFocus
+                  />
+                  <Pressable 
+                    style={[styles.actionButton, { backgroundColor: colors.primary, marginBottom: 12 }]}
+                    onPress={handleAddMember}
+                    disabled={addingMember}
+                  >
+                    {addingMember ? <ActivityIndicator color="#fff" /> : <Text style={styles.actionButtonText}>Add to Group</Text>}
+                  </Pressable>
+                  <Pressable 
+                    style={[styles.secondaryButton, { borderColor: colors.primary }]}
+                    onPress={loadPhoneContacts}
+                  >
+                    <Contact size={20} color={colors.primary} />
+                    <Text style={[styles.secondaryButtonText, { color: colors.primary }]}>Select from Contacts</Text>
+                  </Pressable>
+                </>
+              ) : (
+                <RNFlatList
+                  data={phoneContacts}
+                  keyExtractor={item => item.id}
+                  style={{ maxHeight: 400 }}
+                  renderItem={({ item }) => (
+                    <Pressable 
+                      style={[styles.contactRow, { borderBottomColor: colors.border }]}
+                      onPress={() => handleAddContact(item)}
+                    >
+                      <View style={[styles.memberAvatar, { width: 36, height: 36, marginRight: 12 }]}>
+                        <Text style={{ fontSize: 14 }}>{item.name[0]}</Text>
+                      </View>
+                      <View style={{ flex: 1, backgroundColor: 'transparent' }}>
+                        <Text style={{ color: colors.text, fontWeight: '600' }}>{item.name}</Text>
+                        <Text style={{ color: colors.icon, fontSize: 12 }}>{item.phoneNumber}</Text>
+                      </View>
+                    </Pressable>
+                  )}
+                  ListHeaderComponent={
+                    <Pressable onPress={() => setShowContacts(false)} style={{ marginBottom: 16 }}>
+                      <Text style={{ color: colors.primary }}>← Back to Manual</Text>
+                    </Pressable>
+                  }
+                />
+              )}
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Pressable 
+        style={({ pressed }) => [styles.fab, { backgroundColor: colors.primary, opacity: pressed ? 0.9 : 1 }]}
+        onPress={() => router.push({ pathname: '/modal', params: { groupId: id } })}
+      >
+        <Plus color="#fff" size={28} />
+      </Pressable>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
+  loading: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  balanceSection: {
+    padding: 24,
+    borderBottomWidth: 1,
+  },
+  totalRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+    backgroundColor: 'transparent',
+  },
+  totalItem: {
+    backgroundColor: 'transparent',
+  },
+  totalLabel: {
+    fontSize: 14,
+    marginBottom: 4,
+  },
+  totalValue: {
+    fontSize: 28,
+    fontWeight: '800',
+  },
+  settleButton: {
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 20,
+  },
+  settleText: {
+    color: '#fff',
+    fontWeight: '700',
+  },
+  debtTiles: {
+    flexDirection: 'row',
+    backgroundColor: 'transparent',
+  },
+  debtTile: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    gap: 8,
+  },
+  debtTileText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  listHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 16,
+    backgroundColor: 'transparent',
+  },
+  listTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+  },
+  listContent: {
+    paddingHorizontal: 20,
+    paddingBottom: 100,
+  },
+  expenseCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    marginBottom: 12,
+  },
+  expenseDateContainer: {
+    width: 44,
+    height: 44,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  expenseDateMonth: {
+    fontSize: 10,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  expenseDateDay: {
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  expenseInfo: {
+    flex: 1,
+    backgroundColor: 'transparent',
+  },
+  expenseTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  expenseSub: {
+    fontSize: 12,
+  },
+  expenseStatus: {
+    alignItems: 'flex-end',
+    backgroundColor: 'transparent',
+  },
+  expenseStatusText: {
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  expenseStatusAmount: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  emptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 60,
+    backgroundColor: 'transparent',
+  },
+  emptyText: {
+    fontSize: 14,
+    textAlign: 'center',
+  },
+  fab: {
+    position: 'absolute',
+    bottom: 24,
+    right: 24,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  listHeaderContainer: {
+    backgroundColor: 'transparent',
+  },
+  membersSection: {
+    marginBottom: 16,
+    backgroundColor: 'transparent',
+  },
+  memberCard: {
+    alignItems: 'center',
+    marginRight: 16,
+    width: 60,
+    backgroundColor: 'transparent',
+  },
+  memberAvatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.05)',
+  },
+  memberName: {
+    textAlign: 'center',
+    width: '100%',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 24,
+    minHeight: 300,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 24,
+    backgroundColor: 'transparent',
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+  },
+  modalBody: {
+    backgroundColor: 'transparent',
+  },
+  input: {
+    height: 56,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    fontSize: 16,
+    marginBottom: 20,
+  },
+  actionButton: {
+    height: 56,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  actionButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  secondaryButton: {
+    height: 56,
+    borderRadius: 12,
+    borderWidth: 1,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 8,
+  },
+  secondaryButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  contactRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    backgroundColor: 'transparent',
+  },
+});

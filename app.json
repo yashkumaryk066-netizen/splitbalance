@@ -1,39 +1,66 @@
 {
   "expo": {
-    "name": "splitbalance",
+    "name": "SplitNest",
     "slug": "splitbalance",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "splitbalance",
+    "scheme": "splitnest",
     "userInterfaceStyle": "automatic",
     "splash": {
-      "image": "./assets/images/splash-icon.png",
+      "image": "./assets/images/splash.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#1e1b4b"
     },
+    "newArchEnabled": false,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.tele.splitnest",
+      "userInterfaceStyle": "automatic"
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "foregroundImage": "./assets/images/icon.png",
+        "backgroundColor": "#1e1b4b"
       },
-      "predictiveBackGestureEnabled": false
+      "package": "com.tele.splitnest",
+      "userInterfaceStyle": "automatic",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.READ_CONTACTS"
+      ]
     },
     "web": {
       "bundler": "metro",
       "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/icon.png"
     },
     "plugins": [
-      "expo-router"
+      "expo-router",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow SplitNest to access your photos to upload bill receipts.",
+          "cameraPermission": "Allow SplitNest to use the camera to snap bill receipts."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {
+        "origin": false
+      },
+      "eas": {
+        "projectId": "6b7828b3-1318-4152-993e-315cb34c3789"
+      }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/6b7828b3-1318-4152-993e-315cb34c3789"
     }
   }
 }
