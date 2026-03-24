@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { StyleSheet, FlatList, View as RNView, Pressable } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Text, View } from '@/components/Themed';
+import { useUserStore } from '@/src/store/useUserStore';
 import { useExpenseStore } from '@/src/store/useExpenseStore';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
@@ -9,44 +10,42 @@ import { Receipt, TrendingUp, TrendingDown, ChevronRight, Filter } from 'lucide-
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
 export default function ActivityScreen() {
+  const { user } = useUserStore();
   const { activities } = useExpenseStore();
   const colorScheme = useColorScheme() ?? 'light';
   const colors = Colors[colorScheme];
   const router = useRouter();
+  const displayActivities = activities;
 
-  // Mock data for history if empty
-  const displayActivities = activities.length > 0 ? activities : [
-    { id: '1', type: 'expense', description: 'Grocery shopping', amount: 450, date: new Date(), paidBy: 'You' },
-    { id: '2', type: 'expense', description: 'Movie tickets', amount: 800, date: new Date(Date.now() - 86400000), paidBy: 'Rahul' },
-    { id: '3', type: 'settlement', description: 'Settled up with Rahul', amount: 500, date: new Date(Date.now() - 172800000), paidBy: 'You' },
-    { id: '4', type: 'expense', description: 'Internet Bill', amount: 1500, date: new Date(Date.now() - 259200000), paidBy: 'You' },
-    { id: '5', type: 'expense', description: 'Uber ride', amount: 320, date: new Date(Date.now() - 345600000), paidBy: 'Rahul' },
-  ];
+  const renderItem = ({ item, index }: { item: any, index: number }) => {
+    const isPaidByMe = item.paidBy === user?.uid || item.paidBy === 'You';
+    const date = item.date?.toDate ? item.date.toDate() : new Date(item.date);
 
-  const renderItem = ({ item, index }: { item: any, index: number }) => (
-    <Animated.View 
-      entering={FadeInDown.delay(index * 50)} 
-    >
-      <Pressable 
-        onPress={() => item.groupId ? router.push(`/group/${item.groupId}`) : null}
-        style={({ pressed }) => [styles.activityRow, { borderBottomColor: colors.border, opacity: pressed ? 0.7 : 1 }]}
+    return (
+      <Animated.View 
+        entering={FadeInDown.delay(index * 50)} 
       >
-        <RNView style={[styles.iconBox, { backgroundColor: item.type === 'expense' ? colors.primary + '15' : colors.gain + '15' }]}>
-          {item.type === 'expense' ? <Receipt size={20} color={colors.primary} /> : <TrendingUp size={20} color={colors.gain} />}
-        </RNView>
-        <RNView style={styles.mainInfo}>
-          <Text style={styles.activityTitle}>{item.description}</Text>
-          <Text style={[styles.activityDate, { color: colors.icon }]}>{new Date(item.date).toDateString()}</Text>
-        </RNView>
-        <RNView style={styles.rightInfo}>
-          <Text style={[styles.amountText, { color: item.paidBy === 'You' ? colors.gain : colors.debt }]}>
-            {item.paidBy === 'You' ? `+₹${item.amount}` : `-₹${item.amount}`}
-          </Text>
-          <Text style={[styles.paidByText, { color: colors.icon }]}>Paid by {item.paidBy}</Text>
-        </RNView>
-      </Pressable>
-    </Animated.View>
-  );
+        <Pressable 
+          onPress={() => item.groupId ? router.push(`/group/${item.groupId}`) : null}
+          style={({ pressed }) => [styles.activityRow, { borderBottomColor: colors.border, opacity: pressed ? 0.7 : 1 }]}
+        >
+          <RNView style={[styles.iconBox, { backgroundColor: item.type === 'expense' ? colors.primary + '15' : colors.gain + '15' }]}>
+            {item.type === 'expense' ? <Receipt size={20} color={colors.primary} /> : <TrendingUp size={20} color={colors.gain} />}
+          </RNView>
+          <RNView style={styles.mainInfo}>
+            <Text style={styles.activityTitle}>{item.description}</Text>
+            <Text style={[styles.activityDate, { color: colors.icon }]}>{date.toDateString()}</Text>
+          </RNView>
+          <RNView style={styles.rightInfo}>
+            <Text style={[styles.amountText, { color: isPaidByMe ? colors.gain : colors.debt }]}>
+              {isPaidByMe ? `+₹${item.amount}` : `-₹${item.amount}`}
+            </Text>
+            <Text style={[styles.paidByText, { color: colors.icon }]}>Paid by {isPaidByMe ? 'You' : 'Others'}</Text>
+          </RNView>
+        </Pressable>
+      </Animated.View>
+    );
+  };
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -54,13 +53,21 @@ export default function ActivityScreen() {
         <Text style={[styles.headerSubtitle, { color: colors.icon }]}>Detailed history of all your splits.</Text>
       </View>
       
-      <FlatList
-        data={displayActivities}
-        renderItem={renderItem}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.listContainer}
-        showsVerticalScrollIndicator={false}
-      />
+      {displayActivities.length > 0 ? (
+        <FlatList
+          data={displayActivities}
+          renderItem={renderItem}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.listContainer}
+          showsVerticalScrollIndicator={false}
+        />
+      ) : (
+        <View style={styles.emptyContainer}>
+          <Receipt size={64} color={colors.icon} />
+          <Text style={[styles.emptyTitle, { color: colors.text }]}>No activities yet</Text>
+          <Text style={[styles.emptySubtitle, { color: colors.icon }]}>Expenses you add will appear here.</Text>
+        </View>
+      )}
     </View>
   );
 }
@@ -119,5 +126,21 @@ const styles = StyleSheet.create({
   },
   paidByText: {
     fontSize: 10,
+  },
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 40,
+  },
+  emptyTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    marginTop: 20,
+    marginBottom: 8,
+  },
+  emptySubtitle: {
+    fontSize: 16,
+    textAlign: 'center',
   },
 });

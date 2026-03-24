@@ -3,22 +3,16 @@ import { useFonts } from 'expo-font';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
-import { Platform } from 'react-native';
+import { Platform, View, ActivityIndicator } from 'react-native';
 import 'react-native-reanimated';
 import { useColorScheme } from '@/components/useColorScheme';
 import { useUserStore } from '@/src/store/useUserStore';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from '@/src/services/firebaseConfig';
+import { useExpenseStore } from '@/src/store/useExpenseStore';
+import { subscribeToUserExpenses } from '@/src/services/expenseService';
 
-export {
-  ErrorBoundary,
-} from 'expo-router';
-
-export const unstable_settings = {
-  initialRouteName: '(tabs)',
-};
-
-SplashScreen.preventAutoHideAsync();
+import { NotificationProvider } from '@/components/Notification';
 
 export default function RootLayout() {
   const [loaded, error] = useFonts({
@@ -37,14 +31,16 @@ export default function RootLayout() {
 
   if (!loaded) return null;
 
-  return <RootLayoutNav />;
+  return (
+    <NotificationProvider>
+      <RootLayoutNav />
+    </NotificationProvider>
+  );
 }
 
 function RootLayoutNav() {
   const colorScheme = useColorScheme();
   const { user, loading } = useUserStore();
-  const segments = useSegments();
-  const router = useRouter();
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
@@ -53,23 +49,44 @@ function RootLayoutNav() {
     });
     return unsub;
   }, []);
-  
-  if (loading) return null; // Added this line to prevent immediate redirect before auth state is known
 
-  const inAuthGroup = segments[0] === '(auth)';
-  if (!user && !inAuthGroup) {
-    router.replace('/(auth)/login');
-  } else if (user && inAuthGroup) {
-    router.replace('/(tabs)');
+  useEffect(() => {
+    if (user?.uid) {
+      const unsub = subscribeToUserExpenses(user.uid, (data) => {
+        useUserStore.getState().setLoading(false);
+        useExpenseStore.getState().setActivities(data.expenses);
+        useExpenseStore.getState().setBalance(data.balance);
+      });
+      return unsub;
+    }
+  }, [user]);
+
+  // While checking auth state, show a clean loader
+  if (loading) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: colorScheme === 'dark' ? '#0F172A' : '#FFFFFF' }}>
+        <ActivityIndicator size="large" color="#4f46e5" />
+      </View>
+    );
   }
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack>
-        <Stack.Screen name="(auth)" options={{ headerShown: false }} />
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
+      <Stack screenOptions={{ headerShown: false }}>
+        {!user ? (
+          // Auth flow: only Login/Register are available
+          <Stack.Screen name="(auth)" options={{ headerShown: false, animation: 'fade' }} />
+        ) : (
+          // Main flow: Dashboard and Modals are available
+          <>
+            <Stack.Screen name="(tabs)" options={{ headerShown: false, animation: 'fade' }} />
+            <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
+          </>
+        )}
       </Stack>
     </ThemeProvider>
   );
 }
+
+
+

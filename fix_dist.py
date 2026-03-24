@@ -13,5 +13,8 @@ for root, _, files in os.walk('./dist'):
                 with open(path, 'w', encoding='utf-8') as f:
                     f.write(new_content)
 
-os.rename('./dist/_sitemap.html', './dist/sitemap.html')
-os.rename('./dist/_expo', './dist/expo_assets')
+if os.path.exists('./dist/_sitemap.html'):
+    os.rename('./dist/_sitemap.html', './dist/sitemap.html')
+
+if os.path.exists('./dist/_expo'):
+    os.rename('./dist/_expo', './dist/expo_assets')

@@ -6,8 +6,11 @@ import { useUserStore } from '@/src/store/useUserStore';
 import { getGroups, createGroup } from '@/src/services/expenseService';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
-import { Users, Plus, ChevronRight, X, Contact } from 'lucide-react-native';
+import { Users, Plus, ChevronRight, X, Contact, TrendingUp } from 'lucide-react-native';
 import Animated, { FadeInRight, Layout } from 'react-native-reanimated';
+import { useExpenseStore } from '@/src/store/useExpenseStore';
+import { calculateGroupMetrics } from '@/src/services/expenseService';
+import { useNotification } from '@/components/Notification';
 
 export default function GroupsScreen() {
   const [groups, setGroups] = useState<any[]>([]);
@@ -17,20 +20,32 @@ export default function GroupsScreen() {
   const [newGroupName, setNewGroupName] = useState('');
   
   const { user } = useUserStore();
+  const { activities } = useExpenseStore();
+  const { showNotification } = useNotification();
   const colorScheme = useColorScheme() ?? 'light';
   const colors = Colors[colorScheme];
   const router = useRouter();
 
   useEffect(() => {
-    if (user) loadGroups();
+    if (user) {
+      loadGroups();
+    } else {
+      setLoading(false);
+    }
   }, [user]);
 
   const loadGroups = async () => {
+    if (!user?.uid) {
+      setLoading(false);
+      return;
+    }
     try {
-      const g = await getGroups(user!.uid);
+      setLoading(true);
+      const g = await getGroups(user.uid);
       setGroups(g);
     } catch (err) {
-      console.error(err);
+      console.error("Error loading groups:", err);
+      // Fallback or alert
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -38,40 +53,67 @@ export default function GroupsScreen() {
   };
 
   const handleCreateGroup = async () => {
-    if (!newGroupName) return;
+    // Defensive check: ensure group name and user exist
+    if (!newGroupName.trim() || !user?.uid) {
+      showNotification('Group name cannot be empty', 'error');
+      return;
+    }
     try {
-      await createGroup(newGroupName, [user!.uid]);
+      await createGroup(newGroupName.trim(), [user.uid]);
       setNewGroupName('');
       setModalVisible(false);
-      loadGroups();
+      showNotification('Group created successfully!', 'success');
+      loadGroups(); // Reload groups after successful creation
     } catch (err) {
-      console.error(err);
-      alert('Failed to create group');
+      console.error("Failed to create group:", err);
+      showNotification('Failed to create group', 'error');
     }
   };
 
-  const renderGroup = ({ item, index }: { item: any, index: number }) => (
-    <Animated.View 
-      entering={FadeInRight.delay(index * 100)}
-      layout={Layout.springify()}
-    >
-      <Pressable 
-        style={[styles.groupCard, { backgroundColor: colors.cardBg, borderColor: colors.border }]}
-        onPress={() => router.push(`/group/${item.id}`)}
+  const renderGroup = ({ item, index }: { item: any, index: number }) => {
+    // Calculate personal balance for this group
+    const groupExpenses = activities.filter(a => a.groupId === item.id);
+    // Mock members for metrics if they aren't fully loaded here
+    const metrics = calculateGroupMetrics(groupExpenses, item.members.map((mId: string) => ({ id: mId })));
+    const myNet = metrics[user?.uid || ''] || 0;
+
+    return (
+      <Animated.View 
+        entering={FadeInRight.delay(index * 100)}
+        layout={Layout.springify()}
       >
-        <View style={[styles.avatar, { backgroundColor: colors.primary + '20' }]}>
-          <Users color={colors.primary} size={24} />
-        </View>
-        <View style={styles.groupInfo}>
-          <Text style={styles.groupName}>{item.name}</Text>
-          <Text style={[styles.groupSubtitle, { color: colors.icon }]}>
-            {item.members.length} member{item.members.length > 1 ? 's' : ''}
-          </Text>
-        </View>
-        <ChevronRight color={colors.icon} size={20} />
-      </Pressable>
-    </Animated.View>
-  );
+        <Pressable 
+          style={[styles.groupCard, { backgroundColor: colors.cardBg, borderColor: colors.border }]}
+          onPress={() => router.push(`/group/${item.id}`)}
+        >
+          <View style={[styles.avatar, { backgroundColor: colors.primary + '20' }]}>
+            <Users color={colors.primary} size={24} />
+          </View>
+          <View style={styles.groupInfo}>
+            <Text style={styles.groupName}>{item.name}</Text>
+            <Text style={[styles.groupSubtitle, { color: colors.icon }]}>
+              {item.members.length} member{item.members.length > 1 ? 's' : ''}
+            </Text>
+          </View>
+          <View style={styles.balanceInfo}>
+            {Math.abs(myNet) > 0.1 ? (
+              <View style={{ backgroundColor: 'transparent', alignItems: 'flex-end' }}>
+                <Text style={[styles.balanceLabel, { color: myNet > 0 ? colors.gain : colors.debt }]}>
+                  {myNet > 0 ? 'you are owed' : 'you owe'}
+                </Text>
+                <Text style={[styles.balanceAmount, { color: myNet > 0 ? colors.gain : colors.debt }]}>
+                  ₹{Math.abs(myNet).toFixed(0)}
+                </Text>
+              </View>
+            ) : (
+              <Text style={[styles.settledText, { color: colors.icon }]}>settled up</Text>
+            )}
+            <ChevronRight color={colors.icon} size={16} />
+          </View>
+        </Pressable>
+      </Animated.View>
+    );
+  };
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -172,7 +214,25 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   groupSubtitle: {
-    fontSize: 14,
+    fontSize: 12,
+  },
+  balanceInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'transparent',
+  },
+  balanceLabel: {
+    fontSize: 10,
+    textTransform: 'lowercase',
+  },
+  balanceAmount: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  settledText: {
+    fontSize: 12,
+    opacity: 0.5,
   },
   emptyState: {
     alignItems: 'center',

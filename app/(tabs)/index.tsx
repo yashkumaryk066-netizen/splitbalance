@@ -16,38 +16,56 @@ export default function HomeDashboard() {
   const colors = Colors[colorScheme];
   const router = useRouter();
 
-  // Mock data for initial view if none exists
-  const displayActivities = activities.length > 0 ? activities : [
-    { id: '1', type: 'expense', description: 'Dinner with friends', amount: 1200, date: new Date(), paidBy: 'You' },
-    { id: '2', type: 'expense', description: 'Electricity Bill', amount: 3500, date: new Date(Date.now() - 86400000), paidBy: 'You' },
-    { id: '3', type: 'settlement', description: 'Settled up with Rahul', amount: 500, date: new Date(Date.now() - 172800000), paidBy: 'Rahul' },
-  ];
+  const displayActivities = activities;
 
-  const renderActivity: ListRenderItem<any> = ({ item, index }) => (
-    <Animated.View 
-      entering={FadeInUp.delay(index * 100)} 
-      layout={Layout.springify()}
-    >
-      <Pressable 
-        onPress={() => item.groupId ? router.push(`/group/${item.groupId}`) : router.push('/(tabs)/groups')}
-        style={({ pressed }) => [styles.activityItem, { backgroundColor: colors.cardBg, borderColor: colors.border, opacity: pressed ? 0.8 : 1 }]}
+  const renderActivity: ListRenderItem<any> = ({ item, index }) => {
+    const isPaidByMe = item.paidBy === user?.uid;
+    const myShare = item.splitDetails?.[user?.uid || ''] || 0;
+    const date = item.date?.toDate ? item.date.toDate() : new Date(item.date);
+    
+    // Calculate how much I am owed (if I paid) or how much I owe (if someone else paid)
+    let displayAmount = 0;
+    let isPositive = false;
+
+    if (isPaidByMe) {
+      displayAmount = item.amount - myShare;
+      isPositive = true;
+    } else {
+      displayAmount = myShare;
+      isPositive = false;
+    }
+
+    if (displayAmount === 0 && !isPaidByMe) return null; // Not involved
+
+    return (
+      <Animated.View 
+        entering={FadeInUp.delay(index * 100)} 
+        layout={Layout.springify()}
       >
-        <View style={[styles.activityIcon, { backgroundColor: item.type === 'expense' ? colors.primary + '20' : colors.gain + '20' }]}>
-          {item.type === 'expense' ? <Receipt size={20} color={colors.primary} /> : <TrendingUp size={20} color={colors.gain} />}
-        </View>
-        <View style={styles.activityInfo}>
-          <Text style={styles.activityTitle}>{item.description}</Text>
-          <Text style={[styles.activityDate, { color: colors.icon }]}>{new Date(item.date).toLocaleDateString()}</Text>
-        </View>
-        <View style={styles.activityAmountContainer}>
-          <Text style={[styles.activityAmount, { color: item.paidBy === 'You' ? colors.gain : colors.debt }]}>
-            {item.paidBy === 'You' ? `+₹${item.amount}` : `-₹${item.amount}`}
-          </Text>
-          <Text style={[styles.activityPaidBy, { color: colors.icon }]}>Paid by {item.paidBy}</Text>
-        </View>
-      </Pressable>
-    </Animated.View>
-  );
+        <Pressable 
+          onPress={() => item.groupId ? router.push(`/group/${item.groupId}`) : router.push('/(tabs)/groups')}
+          style={({ pressed }) => [styles.activityItem, { backgroundColor: colors.cardBg, borderColor: colors.border, opacity: pressed ? 0.8 : 1 }]}
+        >
+          <View style={[styles.activityIcon, { backgroundColor: item.type === 'expense' ? colors.primary + '20' : colors.gain + '20' }]}>
+            {item.type === 'expense' ? <Receipt size={20} color={colors.primary} /> : <TrendingUp size={20} color={colors.gain} />}
+          </View>
+          <View style={styles.activityInfo}>
+            <Text style={styles.activityTitle}>{item.description}</Text>
+            <Text style={[styles.activityDate, { color: colors.icon }]}>{date.toLocaleDateString()}</Text>
+          </View>
+          <View style={styles.activityAmountContainer}>
+            <Text style={[styles.activityAmount, { color: isPositive ? colors.gain : colors.debt }]}>
+              {isPositive ? `+₹${displayAmount.toFixed(0)}` : `-₹${displayAmount.toFixed(0)}`}
+            </Text>
+            <Text style={[styles.activityPaidBy, { color: colors.icon }]}>
+              {isPaidByMe ? 'You paid' : 'You owe'}
+            </Text>
+          </View>
+        </Pressable>
+      </Animated.View>
+    );
+  };
+
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -63,9 +81,9 @@ export default function HomeDashboard() {
               <View style={styles.summaryIconContainer}>
                 <TrendingUp size={16} color={colors.gain} />
               </View>
-              <View>
+              <View style={{ backgroundColor: 'transparent' }}>
                 <Text style={styles.summaryItemLabel}>You are owed</Text>
-                <Text style={styles.summaryItemValue}>₹{balance.owed || 4500}</Text>
+                <Text style={styles.summaryItemValue}>₹{balance.owed || 0}</Text>
               </View>
             </View>
             
@@ -73,9 +91,9 @@ export default function HomeDashboard() {
               <View style={styles.summaryIconContainer}>
                 <TrendingDown size={16} color={colors.debt} />
               </View>
-              <View>
+              <View style={{ backgroundColor: 'transparent' }}>
                 <Text style={styles.summaryItemLabel}>You owe</Text>
-                <Text style={styles.summaryItemValue}>₹{balance.owe || 1200}</Text>
+                <Text style={styles.summaryItemValue}>₹{balance.owe || 0}</Text>
               </View>
             </View>
           </View>
@@ -116,13 +134,20 @@ export default function HomeDashboard() {
           </Pressable>
         </View>
 
-        <FlatList
-          data={displayActivities}
-          renderItem={renderActivity}
-          keyExtractor={(item) => item.id}
-          scrollEnabled={false}
-          contentContainerStyle={styles.activityList}
-        />
+        {displayActivities.length > 0 ? (
+          <FlatList
+            data={displayActivities.slice(0, 5)}
+            renderItem={renderActivity}
+            keyExtractor={(item) => item.id}
+            scrollEnabled={false}
+            contentContainerStyle={styles.activityList}
+          />
+        ) : (
+          <View style={[styles.emptyContainer, { backgroundColor: colors.cardBg, borderColor: colors.border }]}>
+            <Receipt size={40} color={colors.icon} />
+            <Text style={[styles.emptyText, { color: colors.icon }]}>No recent activity</Text>
+          </View>
+        )}
         
       </ScrollView>
       
@@ -285,6 +310,19 @@ const styles = StyleSheet.create({
   },
   activityPaidBy: {
     fontSize: 10,
+  },
+  emptyContainer: {
+    padding: 40,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+  },
+  emptyText: {
+    fontSize: 16,
+    fontWeight: '500',
   },
   fab: {
     position: 'absolute',

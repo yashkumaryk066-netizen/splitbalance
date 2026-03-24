@@ -1,4 +1,4 @@
-import { collection, query, where, getDocs, addDoc, Timestamp, doc, updateDoc, arrayUnion, setDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, addDoc, Timestamp, doc, updateDoc, arrayUnion, setDoc, onSnapshot, orderBy } from 'firebase/firestore';
 import { db } from './firebaseConfig';
 
 export interface Group {
@@ -64,7 +64,8 @@ export const createGhostUser = async (name: string, phone: string) => {
 };
 
 export const claimGhostUser = async (phone: string, newUid: string) => {
-  const q = query(collection(db, 'users'), where('phoneNumber', '==', phone), where('isGhost', '==', true));
+  const normalizedSearch = phone.replace(/[^\d+]/g, '');
+  const q = query(collection(db, 'users'), where('phoneNumber', '==', normalizedSearch), where('isGhost', '==', true));
   const qSnap = await getDocs(q);
   
   if (!qSnap.empty) {
@@ -87,3 +88,87 @@ export const claimGhostUser = async (phone: string, newUid: string) => {
     }
   }
 };
+
+export const subscribeToUserExpenses = (userId: string, onUpdate: (data: { expenses: any[], balance: any }) => void) => {
+  // First, we need the group IDs the user belongs to
+  const groupsQ = query(collection(db, 'groups'), where('members', 'array-contains', userId));
+  
+  return onSnapshot(groupsQ, (groupSnap) => {
+    const groupIds = groupSnap.docs.map(d => d.id);
+    if (groupIds.length === 0) {
+      onUpdate({ expenses: [], balance: { total: 0, owed: 0, owe: 0 } });
+      return;
+    }
+
+    // Now listen only to expenses in these groups
+    const expensesQ = query(
+      collection(db, 'expenses'), 
+      where('groupId', 'in', groupIds),
+      orderBy('date', 'desc')
+    );
+
+    return onSnapshot(expensesQ, (expSnap) => {
+      const allExpenses = expSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      
+      let totalOwed = 0;
+      let totalOwe = 0;
+
+      allExpenses.forEach((e: any) => {
+        const isPaidByMe = e.paidBy === userId;
+        const splitDetails = e.splitDetails || {};
+        
+        if (isPaidByMe) {
+          // I paid, others owe me. 
+          // Sum up everything in splitDetails that is NOT from me.
+          Object.keys(splitDetails).forEach(mId => {
+            if (mId !== userId) {
+              totalOwed += (splitDetails[mId] || 0);
+            }
+          });
+        } else if (splitDetails[userId] !== undefined) {
+          // Someone else paid, I owe them
+          totalOwe += (splitDetails[userId] || 0);
+        }
+      });
+
+      onUpdate({
+        expenses: allExpenses,
+        balance: { 
+          total: totalOwed - totalOwe, 
+          owed: totalOwed, 
+          owe: totalOwe 
+        }
+      });
+    });
+  });
+};
+
+/**
+ * Advanced debt engine to calculate balances within a group
+ * Returns net balance for each member
+ */
+export const calculateGroupMetrics = (expenses: any[], members: any[]) => {
+  const memberBalances: { [key: string]: number } = {};
+  members.forEach(m => memberBalances[m.id] = 0);
+
+  expenses.forEach(e => {
+    const paidBy = e.paidBy;
+    const amount = e.amount;
+    const splits = e.splitDetails || {};
+
+    // Plus the whole amount to the payer
+    if (memberBalances[paidBy] !== undefined) {
+      memberBalances[paidBy] += amount;
+    }
+
+    // Subtract the portion each person owes
+    Object.keys(splits).forEach(mId => {
+      if (memberBalances[mId] !== undefined) {
+        memberBalances[mId] -= splits[mId];
+      }
+    });
+  });
+
+  return memberBalances;
+};
+

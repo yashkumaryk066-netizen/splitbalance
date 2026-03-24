@@ -1,27 +1,55 @@
 import React from 'react';
-import { StyleSheet, Pressable, ScrollView, Switch, Platform } from 'react-native';
+import { StyleSheet, Pressable, ScrollView, Switch, Platform, Modal } from 'react-native';
 import { Text, View } from '@/components/Themed';
 import { useUserStore } from '@/src/store/useUserStore';
 import { auth } from '@/src/services/firebaseConfig';
-import { signOut } from 'firebase/auth';
+import { signOut, updateProfile } from 'firebase/auth';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
-import { LogOut, User, Bell, Shield, HelpCircle, ChevronRight, Moon, Settings } from 'lucide-react-native';
+import { LogOut, User, Bell, Shield, HelpCircle, ChevronRight, Moon, Settings, X, DownloadCloud, Edit2 } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
+import { Linking, TextInput, ActivityIndicator } from 'react-native';
+import { useNotification } from '@/components/Notification';
 
 export default function ProfileScreen() {
   const { user, setUser } = useUserStore();
+  const { showNotification } = useNotification();
   const colorScheme = useColorScheme() ?? 'light';
   const colors = Colors[colorScheme];
   const router = useRouter();
 
+  const [personalInfoVisible, setPersonalInfoVisible] = React.useState(false);
+  const [editingName, setEditingName] = React.useState(false);
+  const [newName, setNewName] = React.useState(user?.displayName || '');
+  const [updating, setUpdating] = React.useState(false);
+  const [notificationsEnabled, setNotificationsEnabled] = React.useState(true);
+  const [darkMode, setDarkMode] = React.useState(colorScheme === 'dark');
+
+  const handleUpdateName = async () => {
+    if (!auth.currentUser || !newName.trim()) return;
+    setUpdating(true);
+    try {
+      await updateProfile(auth.currentUser, { displayName: newName.trim() });
+      setUser({ ...auth.currentUser });
+      setEditingName(false);
+      showNotification('Profile updated!', 'success');
+    } catch (err) {
+      showNotification('Failed to update profile', 'error');
+    } finally {
+      setUpdating(false);
+    }
+  };
+
   const handleLogout = async () => {
     try {
       await signOut(auth);
-      setUser(null);
+      useUserStore.getState().setUser(null);
       router.replace('/(auth)/login');
     } catch (err) {
       console.error(err);
+      // Even if signOut fails locally, clear store and redirect to fix state issues
+      useUserStore.getState().setUser(null);
+      router.replace('/(auth)/login');
     }
   };
 
@@ -46,40 +74,151 @@ export default function ProfileScreen() {
   );
 
   return (
-    <ScrollView style={[styles.container, { backgroundColor: colors.background }]} contentContainerStyle={styles.content}>
-      {/* Profile Header */}
-      <View style={styles.profileHeader}>
-        <View style={[styles.avatarLarge, { backgroundColor: colors.secondary }]}>
-          <Text style={styles.avatarText}>{user?.displayName?.charAt(0) || user?.email?.charAt(0) || 'U'}</Text>
-        </View>
-        <Text style={styles.userName}>{user?.displayName || 'User'}</Text>
-        <Text style={[styles.userEmail, { color: colors.icon }]}>{user?.email}</Text>
-      </View>
-
-      <Text style={[styles.sectionTitle, { color: colors.icon }]}>Account Settings</Text>
-      <SettingRow icon={User} title="Personal Info" value={user?.displayName || 'Set Name'} onPress={() => router.push('/(tabs)/profile')} />
-      <SettingRow icon={Bell} title="Notifications" value="Enabled" type="switch" />
-      <SettingRow icon={Shield} title="Privacy & Security" value="Encrypted" onPress={() => router.push('/(tabs)/profile')} />
-
-      <Text style={[styles.sectionTitle, { color: colors.icon }]}>App Settings</Text>
-      <SettingRow icon={Moon} title="Dark Mode" type="switch" />
-      <SettingRow icon={Settings} title="Preferences" onPress={() => router.push('/(tabs)/profile')} />
-
-      <Text style={[styles.sectionTitle, { color: colors.icon }]}>Support</Text>
-      <SettingRow icon={HelpCircle} title="Help Center" onPress={() => router.push('/(tabs)/profile')} />
-
-      <Pressable 
-        style={({ pressed }) => [styles.logoutButton, { backgroundColor: pressed ? colors.debt + '15' : colors.cardBg, borderColor: colors.debt + '50' }]} 
-        onPress={handleLogout}
+    <View style={{ flex: 1, backgroundColor: colors.background }}>
+      <ScrollView 
+        style={styles.container} 
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
       >
-        <LogOut size={20} color={colors.debt} />
-        <Text style={[styles.logoutText, { color: colors.debt }]}>Log Out</Text>
-      </Pressable>
+        {/* Profile Header */}
+        <View style={styles.profileHeader}>
+          <View style={[styles.avatarLarge, { backgroundColor: colors.secondary }]}>
+            <Text style={styles.avatarText}>{user?.displayName?.charAt(0) || user?.email?.charAt(0) || 'U'}</Text>
+          </View>
+          <Text style={[styles.userName, { color: colors.text }]}>{user?.displayName || 'User'}</Text>
+          <Text style={[styles.userEmail, { color: colors.icon }]}>{user?.email}</Text>
+        </View>
 
-      <View style={styles.versionContainer}>
-        <Text style={[styles.versionText, { color: colors.icon }]}>SplitNest v1.0.0</Text>
-      </View>
-    </ScrollView>
+        <Text style={[styles.sectionTitle, { color: colors.icon }]}>Account Settings</Text>
+        <SettingRow icon={User} title="Personal Info" value={user?.displayName || 'Set Name'} onPress={() => { setNewName(user?.displayName || ''); setPersonalInfoVisible(true); }} />
+        <SettingRow icon={Bell} title="Notifications" value={notificationsEnabled ? "Enabled" : "Disabled"} type="switch" />
+        <SettingRow icon={Shield} title="Privacy & Security" value="Encrypted" onPress={() => showNotification("Privacy features are active", "info")} />
+
+        <Text style={[styles.sectionTitle, { color: colors.icon }]}>App Settings</Text>
+        <SettingRow icon={Moon} title="Dark Mode" type="switch" />
+        <SettingRow icon={Settings} title="Preferences" onPress={() => showNotification("Preferences updated", "success")} />
+
+        <Text style={[styles.sectionTitle, { color: colors.icon }]}>Support</Text>
+        <SettingRow 
+          icon={HelpCircle} 
+          title="Help Center" 
+          onPress={() => {
+            const url = 'https://support.splitnest.com';
+            if (Platform.OS === 'web') {
+              window.open(url, '_blank');
+            } else {
+              Linking.openURL(url);
+            }
+          }} 
+        />
+
+        <Pressable 
+          style={({ pressed }) => [styles.logoutButton, { backgroundColor: pressed ? colors.debt + '15' : colors.cardBg, borderColor: colors.debt + '50' }]} 
+          onPress={handleLogout}
+        >
+          <LogOut size={20} color={colors.debt} />
+          <Text style={[styles.logoutText, { color: colors.debt }]}>Log Out</Text>
+        </Pressable>
+
+        <View style={styles.versionContainer}>
+          <Text style={[styles.versionText, { color: colors.icon }]}>SplitNest v1.0.0</Text>
+        </View>
+
+        {Platform.OS === 'web' && (
+          <View style={{ marginTop: 24, gap: 12, backgroundColor: 'transparent' }}>
+            <Pressable 
+              style={[styles.downloadButton, { borderColor: colors.primary, backgroundColor: colors.primary + '10' }]} 
+              onPress={() => Linking.openURL('https://expo.dev/artifacts/eas/fLWMbVpcME1MVvZaTmfZWP.apk')}
+            >
+              <DownloadCloud color={colors.primary} size={20} />
+              <Text style={[styles.downloadText, { color: colors.primary }]}>Download Android App</Text>
+            </Pressable>
+            
+            <Pressable 
+              style={[styles.downloadButton, { borderColor: colors.secondary, backgroundColor: colors.secondary + '10' }]} 
+              onPress={() => Linking.openURL('/splitnest_chrome_extension.zip')}
+            >
+              <DownloadCloud color={colors.secondary} size={20} />
+              <Text style={[styles.downloadText, { color: colors.secondary }]}>Download Chrome Extension</Text>
+            </Pressable>
+          </View>
+        )}
+      </ScrollView>
+
+      <Modal 
+        visible={personalInfoVisible} 
+        transparent 
+        animationType="fade" 
+        onRequestClose={() => setPersonalInfoVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <Pressable 
+            style={[styles.modalContent, { backgroundColor: colors.background, width: Platform.OS === 'web' ? 400 : '90%' }]}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <View style={styles.modalHeader}>
+                <Text style={[styles.modalTitle, { color: colors.text }]}>Secure Personal Details</Text>
+                <Pressable onPress={() => { setPersonalInfoVisible(false); setEditingName(false); }}>
+                    <X color={colors.text} size={24} />
+                </Pressable>
+            </View>
+            <View style={{ gap: 20, padding: 10, backgroundColor: 'transparent' }}>
+                <View style={{ backgroundColor: 'transparent' }}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'transparent', marginBottom: 5 }}>
+                      <Text style={{ color: colors.icon, fontSize: 12 }}>FULL NAME</Text>
+                      {!editingName && (
+                        <Pressable onPress={() => setEditingName(true)} style={{ padding: 5 }}>
+                          <Text style={{ color: colors.primary, fontSize: 14, fontWeight: '800' }}>Edit</Text>
+                        </Pressable>
+                      )}
+                    </View>
+                    {editingName ? (
+                      <View style={{ gap: 10, backgroundColor: 'transparent' }}>
+                        <TextInput 
+                          style={{ color: colors.text, fontSize: 18, borderBottomWidth: 2, borderBottomColor: colors.primary, paddingVertical: 10 }}
+                          value={newName}
+                          onChangeText={setNewName}
+                          autoFocus
+                          placeholder="Enter your name"
+                          placeholderTextColor={colors.icon}
+                        />
+                        <View style={{ flexDirection: 'row', gap: 10, marginTop: 10, backgroundColor: 'transparent' }}>
+                          <Pressable 
+                            onPress={handleUpdateName}
+                            style={{ flex: 1, backgroundColor: colors.primary, padding: 12, borderRadius: 12, alignItems: 'center', justifyContent: 'center' }}
+                          >
+                            {updating ? <ActivityIndicator size="small" color="#fff" /> : <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>Save Changes</Text>}
+                          </Pressable>
+                          <Pressable 
+                            onPress={() => setEditingName(false)}
+                            style={{ padding: 12, borderRadius: 12, borderWidth: 1, borderColor: colors.border }}
+                          >
+                            <Text style={{ color: colors.text }}>Cancel</Text>
+                          </Pressable>
+                        </View>
+                      </View>
+                    ) : (
+                      <Text style={{ color: colors.text, fontSize: 20, fontWeight: '700' }}>{user?.displayName || 'N/A'}</Text>
+                    )}
+                </View>
+
+                <View style={{ backgroundColor: 'transparent' }}>
+                    <Text style={{ color: colors.icon, fontSize: 12 }}>EMAIL ADDRESS</Text>
+                    <Text style={{ color: colors.text, fontSize: 18, fontWeight: '700' }}>{user?.email || 'N/A'}</Text>
+                </View>
+                <View style={{ backgroundColor: 'transparent' }}>
+                    <Text style={{ color: colors.icon, fontSize: 12 }}>USER ACCOUNT STATUS</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 5, backgroundColor: 'transparent' }}>
+                      <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#10B981' }} />
+                      <Text style={{ color: colors.text, fontSize: 14, fontWeight: '600' }}>Active & Verified</Text>
+                    </View>
+                </View>
+            </View>
+          </Pressable>
+        </View>
+      </Modal>
+
+    </View>
   );
 }
 
@@ -185,8 +324,49 @@ const styles = StyleSheet.create({
     marginTop: 40,
     backgroundColor: 'transparent',
   },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 9999,
+  },
+  modalContent: {
+    borderRadius: 24,
+    padding: 24,
+    minHeight: 300,
+    ...Platform.select({
+      web: {
+        boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+      }
+    })
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 24,
+    backgroundColor: 'transparent',
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+  },
   versionText: {
     fontSize: 12,
     opacity: 0.5,
+  },
+  downloadButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    gap: 10,
+  },
+  downloadText: {
+    fontSize: 16,
+    fontWeight: '700',
   },
 });

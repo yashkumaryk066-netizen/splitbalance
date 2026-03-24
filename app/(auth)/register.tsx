@@ -33,13 +33,14 @@ export default function RegisterScreen() {
       await updateProfile(user, { displayName: name });
       
       // Claim any ghost records for this phone number
-      if (phone) await claimGhostUser(phone, user.uid);
+      const normalizedPhone = phone ? phone.replace(/[^\d+]/g, '') : '';
+      if (normalizedPhone) await claimGhostUser(normalizedPhone, user.uid);
 
       await setDoc(doc(db, 'users', user.uid), {
         uid: user.uid,
         displayName: name,
         email: email,
-        phoneNumber: phone,
+        phoneNumber: normalizedPhone,
         createdAt: new Date(),
         totalBalance: 0,
       });

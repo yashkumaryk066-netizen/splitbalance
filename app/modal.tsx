@@ -11,6 +11,7 @@ import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { X, Receipt, Tag, Users, Wallet, Check } from 'lucide-react-native';
 import { StatusBar } from 'expo-status-bar';
+import { useNotification } from '@/components/Notification';
 
 import * as ImagePicker from 'expo-image-picker';
 import { Camera, Image as ImageIcon } from 'lucide-react-native';
@@ -40,6 +41,7 @@ export default function AddExpenseModal() {
 
   const { user } = useUserStore();
   const router = useRouter();
+  const { showNotification } = useNotification();
   const colorScheme = useColorScheme() ?? 'light';
   const colors = Colors[colorScheme];
 
@@ -94,8 +96,9 @@ export default function AddExpenseModal() {
   };
 
   const loadGroups = async () => {
+    if (!user?.uid) return;
     try {
-      const g = await getGroups(user!.uid);
+      const g = await getGroups(user.uid);
       setGroups(g);
     } catch (err) {
       console.error(err);
@@ -103,47 +106,67 @@ export default function AddExpenseModal() {
   };
 
   const handleSave = async () => {
-    if (!amount || !description) return;
+    if (!amount || !description || !user?.uid) return;
     const total = parseFloat(amount);
-    
-    // Validation
-    if (splitType === 'Exact') {
+    let finalSplits: { [key: string]: number } = {};
+
+    // Calculate split details based on type
+    if (splitType === 'Equal') {
+      const activeMembers = groupMembers.length > 0 ? groupMembers : [{ id: user.uid }];
+      const perPerson = total / activeMembers.length;
+      activeMembers.forEach(m => finalSplits[m.id] = perPerson);
+    } else if (splitType === 'Exact') {
       const sum = Object.values(splitDetails).reduce((a, b) => a + b, 0);
       if (Math.abs(sum - total) > 0.1) {
-        alert(`Total must be ₹${total}. Current sum: ₹${sum}`);
+        showNotification(`Total must be ₹${total}. Current sum: ₹${sum}`, 'error');
         return;
       }
+      finalSplits = splitDetails;
     } else if (splitType === 'Percentage') {
       const sum = Object.values(splitDetails).reduce((a, b) => a + b, 0);
       if (Math.abs(sum - 100) > 0.1) {
-        alert('Total percentage must be 100%');
+        showNotification('Total percentage must be 100%', 'error');
         return;
       }
+      Object.keys(splitDetails).forEach(mId => {
+        finalSplits[mId] = (splitDetails[mId] / 100) * total;
+      });
+    } else if (splitType === 'Shares') {
+      const totalShares = Object.values(splitDetails).reduce((a, b) => a + b, 0);
+      if (totalShares === 0) {
+        showNotification('Total shares must be greater than 0', 'error');
+        return;
+      }
+      Object.keys(splitDetails).forEach(mId => {
+        finalSplits[mId] = (splitDetails[mId] / totalShares) * total;
+      });
     }
 
     setLoading(true);
     try {
       const expenseData = {
-        amount: parseFloat(amount),
+        amount: total,
         description,
         groupId,
         category,
         paymentMethod,
-        paidBy: user!.uid,
+        paidBy: user.uid,
         date: new Date(),
         receiptUrl: image,
         splitType,
-        splitDetails,
+        splitDetails: finalSplits,
       };
       await addExpense(expenseData);
+      showNotification('Expense added successfully!', 'success');
       router.back();
     } catch (err) {
       console.error(err);
-      alert('Failed to save expense');
+      showNotification('Failed to save expense', 'error');
     } finally {
       setLoading(false);
     }
   };
+
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>

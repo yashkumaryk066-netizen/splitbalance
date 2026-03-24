@@ -20,12 +20,18 @@ export const getPhoneContacts = async (): Promise<MobileContact[]> => {
       });
 
       if (data.length > 0) {
-        return data.map(contact => ({
-          id: contact.id || Math.random().toString(),
-          name: contact.name || 'Unknown',
-          phoneNumber: contact.phoneNumbers?.[0]?.number || '',
-          image: contact.imageAvailable ? contact.image?.uri : undefined,
-        })).filter(c => !!c.phoneNumber);
+        return data.map(contact => {
+          // Normalize phone number: remove all non-numeric except leading +
+          let phone = contact.phoneNumbers?.[0]?.number || '';
+          const normalizedPhone = phone.replace(/[^\d+]/g, '');
+          
+          return {
+            id: contact.id || Math.random().toString(),
+            name: contact.name || 'Unknown',
+            phoneNumber: normalizedPhone,
+            image: contact.imageAvailable ? contact.image?.uri : undefined,
+          };
+        }).filter(c => !!c.phoneNumber);
       }
     }
   } catch (err) {

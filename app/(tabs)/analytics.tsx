@@ -22,12 +22,21 @@ export default function AnalyticsScreen() {
   const colors = Colors[colorScheme];
 
   useEffect(() => {
-    if (user) loadAnalytics();
+    if (user) {
+      loadAnalytics();
+    } else {
+      setLoading(false);
+    }
   }, [user]);
 
   const loadAnalytics = async () => {
+    if (!user || !user.uid) {
+      setLoading(false);
+      return;
+    }
     try {
-      const q = query(collection(db, 'expenses'), where('paidBy', '==', user?.uid));
+      setLoading(true);
+      const q = query(collection(db, 'expenses'), where('paidBy', '==', user.uid));
       const qSnap = await getDocs(q);
       const expenses = qSnap.docs.map(doc => doc.data());
 
@@ -57,9 +66,10 @@ export default function AnalyticsScreen() {
   };
 
   const handleDownloadMonthly = async () => {
+    if (!user?.uid) return;
     try {
       // Create detailed report for current month
-      await generateGroupReport('Monthly Personal Report', [{ id: user!.uid, displayName: 'You' }], [{ amount: totalSpent, description: 'Personal Spending', date: { toDate: () => new Date() }, paidBy: user!.uid }]);
+      await generateGroupReport('Monthly Personal Report', [{ id: user.uid, displayName: 'You' }], [{ amount: totalSpent, description: 'Personal Spending', date: { toDate: () => new Date() }, paidBy: user.uid }]);
     } catch (err) {
       alert('Failed to generate report');
     }

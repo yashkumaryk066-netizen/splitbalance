@@ -8,11 +8,12 @@ import { doc, getDoc, collection, query, where, getDocs, orderBy, addDoc } from 
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { ArrowLeft, MessageSquare, Receipt, Plus, TrendingUp, Filter, Users, UserPlus, X, Wallet, CreditCard, Landmark, Smartphone, Download, Contact } from 'lucide-react-native';
-import { findUserByEmail, findUserByPhone, createGhostUser, addMemberToGroup } from '@/src/services/expenseService';
+import { findUserByEmail, findUserByPhone, createGhostUser, addMemberToGroup, calculateGroupMetrics } from '@/src/services/expenseService';
 import { getPhoneContacts, MobileContact } from '@/src/services/contactService';
 import { generateGroupReport } from '@/src/services/pdfService';
-import { Modal, TextInput, FlatList as RNFlatList } from 'react-native';
+import { Modal, TextInput, FlatList as RNFlatList, Alert } from 'react-native';
 import Animated, { FadeInUp } from 'react-native-reanimated';
+import { useNotification } from '@/components/Notification';
 
 export default function GroupDetailScreen() {
   const { id } = useLocalSearchParams();
@@ -27,6 +28,7 @@ export default function GroupDetailScreen() {
   const [showContacts, setShowContacts] = useState(false);
   
   const { user } = useUserStore();
+  const { showNotification } = useNotification();
   const colorScheme = useColorScheme() ?? 'light';
   const colors = Colors[colorScheme];
   const router = useRouter();
@@ -35,7 +37,7 @@ export default function GroupDetailScreen() {
     if (id) loadData();
   }, [id]);
 
-  const loadData = async () => {
+  const loadData = async () => {h
     try {
       const gDoc = await getDoc(doc(db, 'groups', id as string));
       if (gDoc.exists()) {
@@ -58,52 +60,92 @@ export default function GroupDetailScreen() {
     }
   };
 
-  const renderExpense = ({ item, index }: { item: any, index: number }) => (
-    <Animated.View entering={FadeInUp.delay(index * 100)} style={[styles.expenseCard, { backgroundColor: colors.cardBg, borderColor: colors.border }]}>
-      <View style={[styles.expenseDateContainer, { backgroundColor: colors.primary + '10' }]}>
-        <Text style={[styles.expenseDateMonth, { color: colors.primary }]}>{new Date(item.date.toDate()).toLocaleString('default', { month: 'short' })}</Text>
-        <Text style={styles.expenseDateDay}>{new Date(item.date.toDate()).getDate()}</Text>
-      </View>
-      <View style={styles.expenseInfo}>
-        <Text style={styles.expenseTitle}>{item.description}</Text>
-        <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'transparent' }}>
-          {item.paymentMethod === 'Cash' && <Wallet size={12} color={colors.icon} style={{ marginRight: 4 }} />}
-          {item.paymentMethod === 'Credit Card' && <CreditCard size={12} color={colors.icon} style={{ marginRight: 4 }} />}
-          {item.paymentMethod === 'UPI' && <Smartphone size={12} color={colors.icon} style={{ marginRight: 4 }} />}
-          <Text style={[styles.expenseSub, { color: colors.icon }]}>
-            {item.paidBy === user?.uid ? 'You paid' : 'Someone paid'} ₹{item.amount}
+  const renderExpense = ({ item, index }: { item: any, index: number }) => {
+    const isPaidByMe = item.paidBy === user?.uid;
+    // Get how much the CURRENT user owes or is owed for this specific expense
+    const myShare = item.splitDetails?.[user?.uid || ''] || 0;
+    
+    let statusText = '';
+    let statusAmount = 0;
+    let statusColor = colors.icon;
+
+    if (isPaidByMe) {
+      // I paid, so I'm owed the sum of what others owe for this bill
+      statusAmount = item.amount - myShare;
+      statusText = statusAmount > 0 ? 'You are owed' : 'No one owes you';
+      statusColor = colors.gain;
+    } else if (myShare > 0) {
+      // Someone else paid, and I owe my share
+      statusAmount = myShare;
+      statusText = 'You owe';
+      statusColor = colors.debt;
+    } else {
+      statusText = 'Not involved';
+    }
+
+    return (
+      <Animated.View entering={FadeInUp.delay(index * 100)} style={[styles.expenseCard, { backgroundColor: colors.cardBg, borderColor: colors.border }]}>
+        <View style={[styles.expenseDateContainer, { backgroundColor: colors.primary + '10' }]}>
+          <Text style={[styles.expenseDateMonth, { color: colors.primary }]}>{new Date(item.date.toDate()).toLocaleString('default', { month: 'short' })}</Text>
+          <Text style={styles.expenseDateDay}>{new Date(item.date.toDate()).getDate()}</Text>
+        </View>
+        <View style={styles.expenseInfo}>
+          <Text style={styles.expenseTitle}>{item.description}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'transparent' }}>
+            {item.paymentMethod === 'Cash' && <Wallet size={12} color={colors.icon} style={{ marginRight: 4 }} />}
+            {item.paymentMethod === 'Credit Card' && <CreditCard size={12} color={colors.icon} style={{ marginRight: 4 }} />}
+            {item.paymentMethod === 'UPI' && <Smartphone size={12} color={colors.icon} style={{ marginRight: 4 }} />}
+            <Text style={[styles.expenseSub, { color: colors.icon }]}>
+              {isPaidByMe ? 'You paid' : 'Someone paid'} ₹{item.amount}
+            </Text>
+          </View>
+        </View>
+        <View style={styles.expenseStatus}>
+          <Text style={[styles.expenseStatusText, { color: statusColor }]}>
+            {statusText}
+          </Text>
+          <Text style={[styles.expenseStatusAmount, { color: statusColor }]}>
+            {statusAmount > 0 ? `₹${statusAmount.toFixed(0)}` : '-'}
           </Text>
         </View>
-      </View>
-      <View style={styles.expenseStatus}>
-        <Text style={[styles.expenseStatusText, { color: item.paidBy === user?.uid ? colors.gain : colors.debt }]}>
-          {item.paidBy === user?.uid ? 'You are owed' : 'You owe'}
-        </Text>
-        <Text style={[styles.expenseStatusAmount, { color: item.paidBy === user?.uid ? colors.gain : colors.debt }]}>
-          ₹{item.amount / (members.length || 2)}
-        </Text>
-      </View>
-    </Animated.View>
-  );
+      </Animated.View>
+    );
+  };
 
   const handleSettleUp = async () => {
+    const metrics = calculateGroupMetrics(expenses, members);
+    const myNet = metrics[user?.uid || ''] || 0;
+    
+    if (Math.abs(myNet) < 1) {
+      showNotification('You are already settled up!', 'info');
+      return;
+    }
+
     setLoading(true);
     try {
       // Create a settlement expense
       const settlementData = {
-        amount: 1200, // Example amount
+        amount: Math.abs(myNet),
         description: 'Settled Up',
         groupId: id,
         category: 'Settlement',
-        paidBy: user!.uid,
+        paidBy: myNet < 0 ? user?.uid : (members.find(m => m.id !== user?.uid)?.id || 'Other'), 
         date: new Date(),
-        type: 'settlement'
+        type: 'settlement',
+        splitDetails: {
+          [user?.uid || '']: myNet > 0 ? myNet : 0,
+          // This is a simplified settlement. In a real app, you'd pick WHO to pay.
+        }
       };
+
+      // For a proper settlement, we need to balance the owe/owed exactly.
+      // Here we'll just create a record that cancels out the balance.
       await addDoc(collection(db, 'expenses'), settlementData);
       loadData();
-      alert('Balance Settled!');
+      showNotification('Balance Settled!', 'success');
     } catch (err) {
       console.error(err);
+      showNotification('Failed to settle up', 'error');
     } finally {
       setLoading(false);
     }
@@ -112,8 +154,9 @@ export default function GroupDetailScreen() {
   const handleDownloadReport = async () => {
     try {
       await generateGroupReport(group?.name || 'Group', members, expenses);
+      showNotification('Report generated!', 'success');
     } catch (err) {
-      alert('Failed to generate report');
+      showNotification('Failed to generate report', 'error');
     }
   };
 
@@ -122,8 +165,12 @@ export default function GroupDetailScreen() {
     setAddingMember(true);
     try {
       let foundUser = await findUserByEmail(memberEmail);
-      if (!foundUser && memberEmail.match(/^\d+$/)) {
-        foundUser = await findUserByPhone(memberEmail);
+      if (!foundUser) {
+        // Try normalizing and finding by phone
+        const normalized = memberEmail.replace(/[^\d+]/g, '');
+        if (normalized.length >= 10) {
+          foundUser = await findUserByPhone(normalized);
+        }
       }
 
       if (foundUser) {
@@ -134,6 +181,7 @@ export default function GroupDetailScreen() {
           setAddMemberModalVisible(false);
           setMemberEmail('');
           loadData();
+          showNotification('Member added!', 'success');
         }
       } else {
         // Create a Ghost User
@@ -142,20 +190,29 @@ export default function GroupDetailScreen() {
         setAddMemberModalVisible(false);
         setMemberEmail('');
         loadData();
-        alert(`Invite sent to ${memberEmail}! They can see this once they join.`);
+        showNotification(`Invite sent to ${memberEmail}!`, 'success');
       }
     } catch (err) {
       console.error(err);
+      showNotification('Failed to add member', 'error');
     } finally {
       setAddingMember(false);
     }
   };
 
   const loadPhoneContacts = async () => {
+    if (Platform.OS === 'web') {
+      showNotification('Contacts are only available on Android & iOS apps', 'info');
+      return;
+    }
     setLoading(true);
     const contacts = await getPhoneContacts();
-    setPhoneContacts(contacts);
-    setShowContacts(true);
+    if (contacts.length === 0) {
+      showNotification('No contacts found or permission denied', 'error');
+    } else {
+      setPhoneContacts(contacts);
+      setShowContacts(true);
+    }
     setLoading(false);
   };
 
@@ -205,8 +262,8 @@ export default function GroupDetailScreen() {
       <View style={[styles.balanceSection, { borderBottomColor: colors.border }]}>
         <View style={styles.totalRow}>
           <View style={styles.totalItem}>
-            <Text style={[styles.totalLabel, { color: colors.icon }]}>Group Balance</Text>
-            <Text style={styles.totalValue}>₹2,500</Text>
+            <Text style={[styles.totalLabel, { color: colors.icon }]}>Group Total Spend</Text>
+            <Text style={styles.totalValue}>₹{expenses.reduce((acc, curr) => acc + (curr.amount || 0), 0).toFixed(0)}</Text>
           </View>
           <Pressable onPress={handleSettleUp} style={[styles.settleButton, { backgroundColor: colors.primary }]}>
             <Text style={styles.settleText}>Settle Up</Text>
@@ -214,10 +271,18 @@ export default function GroupDetailScreen() {
         </View>
         
         <View style={styles.debtTiles}>
-          <View style={[styles.debtTile, { backgroundColor: colors.cardBg, borderColor: colors.border }]}>
-            <TrendingUp size={16} color={colors.gain} />
-            <Text style={[styles.debtTileText, { color: colors.gain }]}>You are owed ₹1,200</Text>
-          </View>
+          {(() => {
+            const metrics = calculateGroupMetrics(expenses, members);
+            const myNet = metrics[user?.uid || ''] || 0;
+            return (
+              <View style={[styles.debtTile, { backgroundColor: colors.cardBg, borderColor: colors.border }]}>
+                {myNet >= 0 ? <TrendingUp size={16} color={colors.gain} /> : <TrendingUp size={16} color={colors.debt} style={{ transform: [{ rotate: '180deg'}] }} />}
+                <Text style={[styles.debtTileText, { color: myNet >= 0 ? colors.gain : colors.debt }]}>
+                  {myNet >= 0 ? `You are owed ₹${myNet.toFixed(0)}` : `You owe ₹${Math.abs(myNet).toFixed(0)}`}
+                </Text>
+              </View>
+            );
+          })()}
           <Pressable onPress={handleDownloadReport} style={[styles.debtTile, { backgroundColor: colors.cardBg, borderColor: colors.border, marginLeft: 10 }]}>
             <Download size={16} color={colors.primary} />
             <Text style={[styles.debtTileText, { color: colors.primary }]}>Report</Text>

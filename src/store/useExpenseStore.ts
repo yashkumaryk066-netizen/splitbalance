@@ -8,12 +8,15 @@ interface Balance {
 
 interface Activity {
   id: string;
-  type: 'expense' | 'settlement';
+  type?: 'expense' | 'settlement';
   description: string;
   amount: number;
-  date: Date;
+  date: any; // Can be Date or Timestamp
   paidBy: string;
+  groupId?: string;
+  splitDetails?: { [key: string]: number };
 }
+
 
 interface ExpenseState {
   balance: Balance;

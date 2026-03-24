@@ -43,6 +43,12 @@
           "photosPermission": "Allow SplitNest to access your photos to upload bill receipts.",
           "cameraPermission": "Allow SplitNest to use the camera to snap bill receipts."
         }
+      ],
+      [
+        "expo-contacts",
+        {
+          "contactsPermission": "Allow SplitNest to access your contacts to easily invite friends to your groups."
+        }
       ]
     ],
     "experiments": {
