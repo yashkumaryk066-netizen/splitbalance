@@ -1,20 +1,20 @@
-import React, { useState, useEffect } from 'react';
-import { StyleSheet, TextInput, Pressable, ScrollView, ActivityIndicator, Platform, KeyboardAvoidingView } from 'react-native';
-import { useRouter } from 'expo-router';
-import { Text, View } from '@/components/Themed';
-import { useUserStore } from '@/src/store/useUserStore';
-import { useExpenseStore } from '@/src/store/useExpenseStore';
-import { db } from '@/src/services/firebaseConfig';
-import { getGroups, addExpense } from '@/src/services/expenseService';
-import { doc, getDoc } from 'firebase/firestore';
-import Colors from '@/constants/Colors';
-import { useColorScheme } from '@/components/useColorScheme';
-import { X, Receipt, Tag, Users, Wallet, Check } from 'lucide-react-native';
-import { StatusBar } from 'expo-status-bar';
 import { useNotification } from '@/components/Notification';
+import { Text, View } from '@/components/Themed';
+import { useColorScheme } from '@/components/useColorScheme';
+import Colors from '@/constants/Colors';
+import { addExpense, getGroups } from '@/src/services/expenseService';
+import { db, storage } from '@/src/services/firebaseConfig';
+import { useUserStore } from '@/src/store/useUserStore';
+import { useRouter } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
+import { doc, getDoc } from 'firebase/firestore';
+import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
+import { Receipt, Tag, Wallet, X } from 'lucide-react-native';
+import React, { useEffect, useState } from 'react';
+import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, TextInput } from 'react-native';
 
 import * as ImagePicker from 'expo-image-picker';
-import { Camera, Image as ImageIcon } from 'lucide-react-native';
+import { Camera } from 'lucide-react-native';
 
 const CATEGORIES = [
   { label: 'Food & Drink', icon: 'utensils' },
@@ -64,21 +64,32 @@ export default function AddExpenseModal() {
     try {
       const gDoc = await getDoc(doc(db, 'groups', id));
       if (gDoc.exists()) {
-        const mIds = gDoc.data().members;
-        const mData: any[] = [];
+        const groupData = gDoc.data();
+        if (!groupData) return;
+        const mIds = groupData.members || [];
         const initialDetails: { [key: string]: number } = {};
-        for (const mId of mIds) {
-          const mDoc = await getDoc(doc(db, 'users', mId));
-          if (mDoc.exists()) {
-            mData.push({ id: mId, ...mDoc.data() });
-            initialDetails[mId] = 0;
-          }
-        }
+        
+        // Fetch all members in parallel
+        const mDocs = await Promise.all(
+          mIds.map((mId: string) => getDoc(doc(db, 'users', mId)))
+        );
+
+        const mData = mDocs
+          .map((mDoc, index) => {
+            if (mDoc.exists()) {
+              initialDetails[mIds[index]] = 0;
+              return { id: mIds[index], ...mDoc.data() };
+            }
+            return null;
+          })
+          .filter(m => m !== null);
+
         setGroupMembers(mData);
         setSplitDetails(initialDetails);
       }
     } catch (err) {
-      console.error(err);
+      console.error("Error loading members:", err);
+      showNotification('Failed to load group members', 'error');
     }
   };
 
@@ -144,6 +155,24 @@ export default function AddExpenseModal() {
 
     setLoading(true);
     try {
+      let receiptUrl = null;
+      
+      // Upload image to Firebase Storage if present
+      if (image && !image.startsWith('http')) {
+        try {
+          const response = await fetch(image);
+          const blob = await response.blob();
+          const storageRef = ref(storage, `receipts/${user.uid}/${Date.now()}.jpg`);
+          await uploadBytes(storageRef, blob);
+          receiptUrl = await getDownloadURL(storageRef);
+        } catch (uploadErr) {
+          console.error("Image upload failed:", uploadErr);
+          showNotification('Could not upload receipt image, saving without it.', 'info');
+        }
+      } else {
+        receiptUrl = image;
+      }
+
       const expenseData = {
         amount: total,
         description,
@@ -152,12 +181,12 @@ export default function AddExpenseModal() {
         paymentMethod,
         paidBy: user.uid,
         date: new Date(),
-        receiptUrl: image,
+        receiptUrl,
         splitType,
         splitDetails: finalSplits,
       };
       await addExpense(expenseData);
-      showNotification('Expense added successfully!', 'success');
+      showNotification('Expense added!', 'success');
       router.back();
     } catch (err) {
       console.error(err);

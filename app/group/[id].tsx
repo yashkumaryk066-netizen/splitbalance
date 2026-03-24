@@ -1,19 +1,18 @@
-import React, { useState, useEffect } from 'react';
-import { StyleSheet, FlatList, Pressable, ActivityIndicator, ScrollView } from 'react-native';
-import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
-import { Text, View } from '@/components/Themed';
-import { useUserStore } from '@/src/store/useUserStore';
-import { db } from '@/src/services/firebaseConfig';
-import { doc, getDoc, collection, query, where, getDocs, orderBy, addDoc } from 'firebase/firestore';
-import Colors from '@/constants/Colors';
-import { useColorScheme } from '@/components/useColorScheme';
-import { ArrowLeft, MessageSquare, Receipt, Plus, TrendingUp, Filter, Users, UserPlus, X, Wallet, CreditCard, Landmark, Smartphone, Download, Contact } from 'lucide-react-native';
-import { findUserByEmail, findUserByPhone, createGhostUser, addMemberToGroup, calculateGroupMetrics } from '@/src/services/expenseService';
-import { getPhoneContacts, MobileContact } from '@/src/services/contactService';
-import { generateGroupReport } from '@/src/services/pdfService';
-import { Modal, TextInput, FlatList as RNFlatList, Alert } from 'react-native';
-import Animated, { FadeInUp } from 'react-native-reanimated';
 import { useNotification } from '@/components/Notification';
+import { Text, View } from '@/components/Themed';
+import { useColorScheme } from '@/components/useColorScheme';
+import Colors from '@/constants/Colors';
+import { getPhoneContacts, MobileContact } from '@/src/services/contactService';
+import { addMemberToGroup, calculateGroupMetrics, createGhostUser, findUserByEmail, findUserByPhone } from '@/src/services/expenseService';
+import { db } from '@/src/services/firebaseConfig';
+import { generateGroupReport } from '@/src/services/pdfService';
+import { useUserStore } from '@/src/store/useUserStore';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { addDoc, collection, doc, getDoc, onSnapshot, orderBy, query, where } from 'firebase/firestore';
+import { ArrowLeft, Contact, CreditCard, Download, Filter, MessageSquare, Plus, Receipt, Smartphone, TrendingUp, UserPlus, Wallet, X } from 'lucide-react-native';
+import React, { useEffect, useState } from 'react';
+import { ActivityIndicator, FlatList, Modal, Platform, Pressable, FlatList as RNFlatList, ScrollView, StyleSheet, TextInput } from 'react-native';
+import Animated, { FadeInUp } from 'react-native-reanimated';
 
 export default function GroupDetailScreen() {
   const { id } = useLocalSearchParams();
@@ -26,6 +25,7 @@ export default function GroupDetailScreen() {
   const [addingMember, setAddingMember] = useState(false);
   const [phoneContacts, setPhoneContacts] = useState<MobileContact[]>([]);
   const [showContacts, setShowContacts] = useState(false);
+  const [contactSearch, setContactSearch] = useState('');
   
   const { user } = useUserStore();
   const { showNotification } = useNotification();
@@ -34,30 +34,57 @@ export default function GroupDetailScreen() {
   const router = useRouter();
 
   useEffect(() => {
-    if (id) loadData();
-  }, [id]);
+    if (!id) return;
 
-  const loadData = async () => {h
-    try {
-      const gDoc = await getDoc(doc(db, 'groups', id as string));
-      if (gDoc.exists()) {
-        const groupData = gDoc.data();
-        setGroup(groupData);
+    setLoading(true);
+    
+    // 1. Real-time Group & Members Listen
+    const unsubGroup = onSnapshot(doc(db, 'groups', id as string), async (gSnap) => {
+      if (gSnap.exists()) {
+        const gData = gSnap.data();
+        setGroup(gData);
+        
+        // Fetch full member details
+        const memberIds = gData.members || [];
         const memberData: any[] = [];
-        for (const mId of groupData.members) {
-          const mDoc = await getDoc(doc(db, 'users', mId));
-          if (mDoc.exists()) memberData.push({ id: mId, ...mDoc.data() });
-        }
+        
+        // Use Promise.all for faster member fetching
+        const mDocs = await Promise.all(
+          memberIds.map((mId: string) => getDoc(doc(db, 'users', mId)))
+        );
+        
+        mDocs.forEach((mDoc, index) => {
+          if (mDoc.exists()) {
+            memberData.push({ id: memberIds[index], ...mDoc.data() });
+          } else {
+            // Placeholder for missing users
+            memberData.push({ id: memberIds[index], displayName: 'Unknown User' });
+          }
+        });
         setMembers(memberData);
       }
-      const q = query(collection(db, 'expenses'), where('groupId', '==', id), orderBy('date', 'desc'));
-      const qSnap = await getDocs(q);
-      setExpenses(qSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    } catch (err) {
-      console.error(err);
-    } finally {
       setLoading(false);
-    }
+    }, (err) => {
+      console.error("Group listen error:", err);
+      setLoading(false);
+    });
+
+    // 2. Real-time Expenses Listen
+    const q = query(collection(db, 'expenses'), where('groupId', '==', id), orderBy('date', 'desc'));
+    const unsubExpenses = onSnapshot(q, (qSnap) => {
+      setExpenses(qSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }, (err) => {
+      console.error("Expense listen error:", err);
+    });
+
+    return () => {
+      unsubGroup();
+      unsubExpenses();
+    };
+  }, [id]);
+
+  const loadData = () => {
+    // Legacy call - listeners handle it now
   };
 
   const renderExpense = ({ item, index }: { item: any, index: number }) => {
@@ -83,11 +110,15 @@ export default function GroupDetailScreen() {
       statusText = 'Not involved';
     }
 
+    const dateObj = item.date?.toDate ? item.date.toDate() : item.date ? new Date(item.date) : new Date();
+    const monthLabel = dateObj.toLocaleString('default', { month: 'short' });
+    const dayLabel = dateObj.getDate();
+
     return (
       <Animated.View entering={FadeInUp.delay(index * 100)} style={[styles.expenseCard, { backgroundColor: colors.cardBg, borderColor: colors.border }]}>
         <View style={[styles.expenseDateContainer, { backgroundColor: colors.primary + '10' }]}>
-          <Text style={[styles.expenseDateMonth, { color: colors.primary }]}>{new Date(item.date.toDate()).toLocaleString('default', { month: 'short' })}</Text>
-          <Text style={styles.expenseDateDay}>{new Date(item.date.toDate()).getDate()}</Text>
+          <Text style={[styles.expenseDateMonth, { color: colors.primary }]}>{monthLabel}</Text>
+          <Text style={styles.expenseDateDay}>{dayLabel}</Text>
         </View>
         <View style={styles.expenseInfo}>
           <Text style={styles.expenseTitle}>{item.description}</Text>
@@ -123,25 +154,27 @@ export default function GroupDetailScreen() {
 
     setLoading(true);
     try {
-      // Create a settlement expense
+      // Create a settlement record
+      const isOwed = myNet > 0;
+      const amount = Math.abs(myNet);
+      
       const settlementData = {
-        amount: Math.abs(myNet),
-        description: 'Settled Up',
+        amount,
+        description: isOwed ? `Received Payment` : `Paid Group Dues`,
         groupId: id,
         category: 'Settlement',
-        paidBy: myNet < 0 ? user?.uid : (members.find(m => m.id !== user?.uid)?.id || 'Other'), 
+        paidBy: isOwed ? (members.find(m => m.id !== user?.uid)?.id || 'Other') : user?.uid,
         date: new Date(),
         type: 'settlement',
         splitDetails: {
-          [user?.uid || '']: myNet > 0 ? myNet : 0,
-          // This is a simplified settlement. In a real app, you'd pick WHO to pay.
+          [user?.uid || '']: isOwed ? amount : 0,
+          // If I was owed 100, the "paidBy" member paid me 100.
+          // So the "payer" gets +100 and I (splitDetails) get -100.
+          // This balances out.
         }
       };
 
-      // For a proper settlement, we need to balance the owe/owed exactly.
-      // Here we'll just create a record that cancels out the balance.
       await addDoc(collection(db, 'expenses'), settlementData);
-      loadData();
       showNotification('Balance Settled!', 'success');
     } catch (err) {
       console.error(err);
@@ -161,40 +194,48 @@ export default function GroupDetailScreen() {
   };
 
   const handleAddMember = async () => {
-    if (!memberEmail) return;
+    if (!memberEmail || !group) {
+      if (!group) showNotification('Group not loaded', 'error');
+      return;
+    }
+    const input = memberEmail.trim();
     setAddingMember(true);
+    
     try {
-      let foundUser = await findUserByEmail(memberEmail);
-      if (!foundUser) {
-        // Try normalizing and finding by phone
-        const normalized = memberEmail.replace(/[^\d+]/g, '');
-        if (normalized.length >= 10) {
-          foundUser = await findUserByPhone(normalized);
-        }
+      let foundUser = null;
+      
+      // Check if input is likely a phone number
+      const isPhone = /^[0-9+()-\s]+$/.test(input) && input.replace(/[^\d]/g, '').length >= 10;
+      
+      if (isPhone) {
+        const cleanPhone = input.replace(/[^\d]/g, '').slice(-10);
+        foundUser = await findUserByPhone(cleanPhone);
+      } else {
+        foundUser = await findUserByEmail(input);
       }
 
       if (foundUser) {
-        if (group.members.includes(foundUser.id)) {
-          alert('User is already a member!');
+        const userData = foundUser as any;
+        if (group.members.includes(userData.id)) {
+          showNotification('User is already a member!', 'info');
         } else {
-          await addMemberToGroup(id as string, foundUser.id);
+          await addMemberToGroup(id as string, userData.id);
+          showNotification(`${userData.displayName || 'User'} added!`, 'success');
           setAddMemberModalVisible(false);
           setMemberEmail('');
-          loadData();
-          showNotification('Member added!', 'success');
         }
       } else {
-        // Create a Ghost User
-        const ghost = await createGhostUser(memberEmail.split('@')[0], memberEmail);
+        // Handle no user found: Create Ghost
+        const displayName = isPhone ? input : input.split('@')[0];
+        const ghost = await createGhostUser(displayName, input);
         await addMemberToGroup(id as string, ghost.id);
+        showNotification(`${displayName} added as Guest!`, 'success');
         setAddMemberModalVisible(false);
         setMemberEmail('');
-        loadData();
-        showNotification(`Invite sent to ${memberEmail}!`, 'success');
       }
     } catch (err) {
-      console.error(err);
-      showNotification('Failed to add member', 'error');
+      console.error('Add member error:', err);
+      showNotification('Could not add member. Please try again.', 'error');
     } finally {
       setAddingMember(false);
     }
@@ -217,23 +258,35 @@ export default function GroupDetailScreen() {
   };
 
   const handleAddContact = async (contact: MobileContact) => {
+    if (!contact.phoneNumber || !group) {
+      if (!group) showNotification('Group not loaded', 'error');
+      return;
+    }
+    
     setAddingMember(true);
     try {
-      let foundUser = await findUserByPhone(contact.phoneNumber || '');
+      // Robust phone normalization: keep only last 10 digits
+      const cleanPhone = contact.phoneNumber.replace(/[^\d]/g, '').slice(-10);
+      let foundUser = await findUserByPhone(cleanPhone);
+      
       if (!foundUser) {
-        foundUser = await createGhostUser(contact.name, contact.phoneNumber || '');
+        // Create ghost with full number prefix but search was optimized
+        foundUser = await createGhostUser(contact.name, contact.phoneNumber);
       }
       
       if (group.members.includes(foundUser.id)) {
-        alert('User is already a member!');
+        showNotification('User is already a member!', 'info');
+        setAddMemberModalVisible(false);
+        setShowContacts(false);
       } else {
         await addMemberToGroup(id as string, foundUser.id);
         setShowContacts(false);
         setAddMemberModalVisible(false);
-        loadData();
+        showNotification(`${contact.name} added!`, 'success');
       }
     } catch (err) {
-      console.error(err);
+      console.error('Error adding contact:', err);
+      showNotification('Failed to add contact', 'error');
     } finally {
       setAddingMember(false);
     }
@@ -307,16 +360,19 @@ export default function GroupDetailScreen() {
                   <UserPlus color={colors.primary} size={20} />
                   <Text style={[styles.memberName, { color: colors.primary, fontSize: 12, marginTop: 4 }]}>Add New</Text>
                 </Pressable>
-                {members.map((m) => (
-                  <View key={m.id} style={styles.memberCard}>
-                    <View style={[styles.memberAvatar, { backgroundColor: colors.secondary + '20' }]}>
-                      <Text style={{ fontWeight: 'bold', color: colors.secondary }}>{m.displayName[0]}</Text>
+                {members.map((m) => {
+                  const displayName = m.displayName || 'Unknown';
+                  return (
+                    <View key={m.id} style={styles.memberCard}>
+                      <View style={[styles.memberAvatar, { backgroundColor: colors.secondary + '20' }]}> 
+                        <Text style={{ fontWeight: 'bold', color: colors.secondary }}>{displayName[0]}</Text>
+                      </View>
+                      <Text numberOfLines={1} style={[styles.memberName, { color: colors.text, fontSize: 12, marginTop: 4 }]}> 
+                        {m.id === user?.uid ? 'You' : `${displayName}${m.isGhost ? ' (Guest)' : ''}`}
+                      </Text>
                     </View>
-                    <Text numberOfLines={1} style={[styles.memberName, { color: colors.text, fontSize: 12, marginTop: 4 }]}>
-                      {m.id === user?.uid ? 'You' : `${m.displayName}${m.isGhost ? ' (Guest)' : ''}`}
-                    </Text>
-                  </View>
-                ))}
+                  );
+                })}
               </ScrollView>
             </View>
 
@@ -376,30 +432,55 @@ export default function GroupDetailScreen() {
                   </Pressable>
                 </>
               ) : (
-                <RNFlatList
-                  data={phoneContacts}
-                  keyExtractor={item => item.id}
-                  style={{ maxHeight: 400 }}
-                  renderItem={({ item }) => (
-                    <Pressable 
-                      style={[styles.contactRow, { borderBottomColor: colors.border }]}
-                      onPress={() => handleAddContact(item)}
-                    >
-                      <View style={[styles.memberAvatar, { width: 36, height: 36, marginRight: 12 }]}>
-                        <Text style={{ fontSize: 14 }}>{item.name[0]}</Text>
-                      </View>
-                      <View style={{ flex: 1, backgroundColor: 'transparent' }}>
-                        <Text style={{ color: colors.text, fontWeight: '600' }}>{item.name}</Text>
-                        <Text style={{ color: colors.icon, fontSize: 12 }}>{item.phoneNumber}</Text>
-                      </View>
-                    </Pressable>
-                  )}
-                  ListHeaderComponent={
-                    <Pressable onPress={() => setShowContacts(false)} style={{ marginBottom: 16 }}>
-                      <Text style={{ color: colors.primary }}>← Back to Manual</Text>
-                    </Pressable>
-                  }
-                />
+                <View style={{ backgroundColor: 'transparent' }}>
+                  <TextInput
+                    style={[styles.input, { height: 44, marginBottom: 12, fontSize: 14, color: colors.text, borderColor: colors.border }]}
+                    placeholder="Search contacts..."
+                    placeholderTextColor={colors.icon}
+                    value={contactSearch}
+                    onChangeText={setContactSearch}
+                  />
+                  <RNFlatList
+                    data={phoneContacts.filter(c => 
+                      c.name.toLowerCase().includes(contactSearch.toLowerCase()) || 
+                      c.phoneNumber?.includes(contactSearch)
+                    )}
+                    keyExtractor={item => item.id}
+                    style={{ maxHeight: 400 }}
+                    renderItem={({ item }) => {
+                      // Check if already in group (best effort search)
+                      const cleanPhone = item.phoneNumber?.replace(/[^\d]/g, '').slice(-10);
+                      const isAlreadyIn = members.some(m => 
+                        (m.phoneNumber || '').replace(/[^\d]/g, '').endsWith(cleanPhone || 'NOMATCH')
+                      );
+
+                      return (
+                        <Pressable 
+                          style={[styles.contactRow, { borderBottomColor: colors.border, opacity: isAlreadyIn ? 0.5 : 1 }]}
+                          onPress={() => !isAlreadyIn && handleAddContact(item)}
+                        >
+                          <View style={[styles.memberAvatar, { width: 36, height: 36, marginRight: 12 }]}>
+                            <Text style={{ fontSize: 14 }}>{item.name[0]}</Text>
+                          </View>
+                          <View style={{ flex: 1, backgroundColor: 'transparent' }}>
+                            <Text style={{ color: colors.text, fontWeight: '600' }}>{item.name}</Text>
+                            <Text style={{ color: colors.icon, fontSize: 12 }}>{item.phoneNumber}</Text>
+                          </View>
+                          {isAlreadyIn && (
+                            <View style={{ backgroundColor: colors.primary + '20', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10 }}>
+                              <Text style={{ color: colors.primary, fontSize: 10, fontWeight: '700' }}>IN GROUP</Text>
+                            </View>
+                          )}
+                        </Pressable>
+                      );
+                    }}
+                    ListHeaderComponent={
+                      <Pressable onPress={() => { setShowContacts(false); setContactSearch(''); }} style={{ marginBottom: 16 }}>
+                        <Text style={{ color: colors.primary }}>← Back to Manual</Text>
+                      </Pressable>
+                    }
+                  />
+                </View>
               )}
             </View>
           </View>

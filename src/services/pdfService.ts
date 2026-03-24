@@ -51,8 +51,8 @@ export const generateGroupReport = async (groupName: string, members: any[], exp
           body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; padding: 30px; color: #1e293b; background-color: #f8fafc; }
           .container { max-width: 800px; margin: 0 auto; background: white; padding: 40px; border-radius: 20px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); }
           .header { text-align: center; margin-bottom: 40px; border-bottom: 2px solid #6366f1; padding-bottom: 20px; }
-          .header h1 { color: #6366f1; margin: 0; font-size: 32px; letter-spacing: -1px; }
-          .header p { color: #64748b; margin: 5px 0 0; }
+          .header h1 { color: #4f46e5; margin: 0; font-size: 32px; letter-spacing: -1.5px; text-transform: uppercase; }
+          .header p { color: #64748b; margin: 5px 0 0; font-weight: 500; }
           
           .section-title { font-size: 18px; font-weight: 700; color: #0f172a; margin: 30px 0 15px; border-left: 4px solid #6366f1; padding-left: 10px; }
           
@@ -155,19 +155,30 @@ export const generateGroupReport = async (groupName: string, members: any[], exp
 
   try {
     if (!Print?.printToFileAsync) {
-      alert('Native printing not available. If you are using the app, please update to the latest version.');
-      return;
+      console.error('Expo Print service not found');
+      throw new Error('Native printing not available');
     }
+
     const { uri } = await Print.printToFileAsync({ html });
-    if (Platform.OS === 'ios' || Platform.OS === 'android') {
-      await Sharing.shareAsync(uri);
-    } else {
-      // For web, we can't easily use Sharing.shareAsync with a local file URI
-      // Print.printAsync is better for web
+    console.log('PDF Generated at:', uri);
+
+    if (Platform.OS === 'web') {
       await Print.printAsync({ html });
+    } else {
+      const isSharingAvailable = await Sharing.isAvailableAsync();
+      if (isSharingAvailable) {
+        await Sharing.shareAsync(uri, {
+          mimeType: 'application/pdf',
+          dialogTitle: `${groupName} Ledger`,
+          UTI: 'com.adobe.pdf',
+        });
+      } else {
+        // Fallback for native devices without sharing
+        await Print.printAsync({ html });
+      }
     }
-  } catch (err) {
+  } catch (err: any) {
     console.error('Error generating PDF:', err);
-    throw err;
+    throw new Error(err?.message || 'Failed to generate PDF');
   }
 };

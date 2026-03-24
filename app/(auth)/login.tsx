@@ -8,6 +8,7 @@ import { useUserStore } from '@/src/store/useUserStore';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { LogIn, UserPlus, Mail, Lock, DownloadCloud } from 'lucide-react-native';
+import { findUserByPhone } from '@/src/services/expenseService';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
@@ -21,13 +22,30 @@ export default function LoginScreen() {
   const handleLogin = async () => {
     if (!email || !password) return;
     setLoading(true);
-    const cleanEmail = email.trim().toLowerCase();
+    let targetEmail = email.trim().toLowerCase();
+    
     try {
-      await signInWithEmailAndPassword(auth, cleanEmail, password);
-      // useAuth hook in _layout handles redirect
+      // Check if input is a phone number (only digits/plus and >= 10 chars)
+      const isPhone = /^[0-9+()-\s]+$/.test(targetEmail) && targetEmail.replace(/[^\d]/g, '').length >= 10;
+      
+      if (isPhone) {
+        const cleanPhone = targetEmail.replace(/[^\d]/g, '').slice(-10);
+        const userData = await findUserByPhone(cleanPhone) as any;
+        if (userData && userData.email) {
+          targetEmail = userData.email;
+        } else {
+          throw new Error('No account found with this phone number.');
+        }
+      }
+
+      const userCredential = await signInWithEmailAndPassword(auth, targetEmail, password);
+      // Manually set user in store immediately for faster UI sync
+      setUser(userCredential.user);
+      router.replace('/(tabs)');
     } catch (error: any) {
       console.error(error);
-      alert(error.message);
+      const msg = error.code === 'auth/user-not-found' ? 'No user found with this email/phone.' : error.message;
+      alert(msg);
     } finally {
       setLoading(false);
     }
@@ -56,7 +74,7 @@ export default function LoginScreen() {
         <View style={[styles.inputContainer, { borderColor: colors.border, backgroundColor: colors.cardBg }]}>
           <Mail size={20} color={colors.icon} style={styles.inputIcon} />
           <TextInput
-            placeholder="Email Address"
+            placeholder="Email or Phone Number"
             placeholderTextColor={colors.icon}
             style={[styles.input, { color: colors.text }]}
             value={email}
