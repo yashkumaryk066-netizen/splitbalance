@@ -1,5 +1,5 @@
 /**
- * SplitNest Premium Theme Palette
+ * SettleStack Premium Theme - Shared Expense Manager
  * Focused on high-contrast accessibility and modern glassmorphism compatibility.
  */
 

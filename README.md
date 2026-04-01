@@ -1,6 +1,6 @@
-# SplitNest - Advanced Expense Sharing App
+# SettleStack - Advanced Expense Sharing App
 
-SplitNest is a premium, high-performance mobile application for tracking shared expenses, managing group debts, and simplifying financial transparency between friends, roommates, and travel groups.
+SettleStack is a premium, high-performance mobile application for tracking shared expenses, managing group debts, and simplifying financial transparency between friends, roommates, and travel groups.
 
 ## 🚀 Key Features
 - **Smart Auth:** Secure email/password authentication via Firebase.

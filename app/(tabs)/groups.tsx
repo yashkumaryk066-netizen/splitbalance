@@ -1,15 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { StyleSheet, FlatList, Pressable, RefreshControl, TextInput, Modal, ActivityIndicator, Platform } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Text, View } from '@/components/Themed';
 import { useUserStore } from '@/src/store/useUserStore';
 import { getGroups, createGroup } from '@/src/services/expenseService';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
-import { Users, Plus, ChevronRight, X, Contact, TrendingUp } from 'lucide-react-native';
+import { Users, Plus, ChevronRight, X, Contact, TrendingUp, Search } from 'lucide-react-native';
 import Animated, { FadeInRight, Layout } from 'react-native-reanimated';
 import { useExpenseStore } from '@/src/store/useExpenseStore';
-import { calculateGroupMetrics } from '@/src/services/expenseService';
+import { calculateGroupMetrics } from '@/src/utils/expenseUtils';
 import { useNotification } from '@/components/Notification';
 
 export default function GroupsScreen() {
@@ -18,6 +19,7 @@ export default function GroupsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
   
   const { user } = useUserStore();
   const { activities } = useExpenseStore();
@@ -25,6 +27,7 @@ export default function GroupsScreen() {
   const colorScheme = useColorScheme() ?? 'light';
   const colors = Colors[colorScheme];
   const router = useRouter();
+  const insets = useSafeAreaInsets();
 
   useEffect(() => {
     if (user) {
@@ -118,10 +121,23 @@ export default function GroupsScreen() {
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <FlatList
-        data={groups}
+        data={groups.filter(g => g.name.toLowerCase().includes(searchQuery.toLowerCase()))}
         renderItem={renderGroup}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.listContent}
+        ListHeaderComponent={
+          <View style={[styles.searchContainer, { backgroundColor: colors.cardBg, borderColor: colors.border }]}>
+            <Search size={18} color={colors.icon} style={{ marginRight: 8 }} />
+            <TextInput
+              style={[styles.searchInput, { color: colors.text }]}
+              placeholder="Search groups..."
+              placeholderTextColor={colors.icon}
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+            />
+            {searchQuery ? <Pressable onPress={() => setSearchQuery('')}><X size={16} color={colors.icon} /></Pressable> : null}
+          </View>
+        }
+        contentContainerStyle={[styles.listContent, { paddingTop: Math.max(insets.top, 20) }]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadGroups(); }} />}
         ListEmptyComponent={
           !loading ? (
@@ -147,7 +163,7 @@ export default function GroupsScreen() {
         onRequestClose={() => setModalVisible(false)}
       >
         <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { backgroundColor: colors.background }]}>
+          <View style={[styles.modalContent, { backgroundColor: colors.background, paddingBottom: Math.max(insets.bottom, 24) }]}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Create New Group</Text>
               <Pressable onPress={() => setModalVisible(false)}>
@@ -317,5 +333,18 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 18,
     fontWeight: '700',
+  },
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    height: 48,
+    borderRadius: 14,
+    borderWidth: 1,
+    marginBottom: 20,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 14,
   },
 });

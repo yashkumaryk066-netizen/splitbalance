@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { StyleSheet, ScrollView, ScrollViewProps, ActivityIndicator } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Text, View } from '@/components/Themed';
 import { useUserStore } from '@/src/store/useUserStore';
 import { db } from '@/src/services/firebaseConfig';
@@ -9,17 +10,22 @@ import { useColorScheme } from '@/components/useColorScheme';
 import { TrendingUp, PieChart, BarChart3, Receipt, Wallet, Download } from 'lucide-react-native';
 import { Pressable } from 'react-native';
 import { generateGroupReport } from '@/src/services/pdfService';
+import { generatePersonalMonthlyReport } from '@/src/services/pdfService';
+import { useNotification } from '@/components/Notification';
 import Animated, { FadeInUp } from 'react-native-reanimated';
 
 export default function AnalyticsScreen() {
+  const { showNotification } = useNotification();
   const [loading, setLoading] = useState(true);
   const [totalSpent, setTotalSpent] = useState(0);
+  const [allExpenses, setAllExpenses] = useState<any[]>([]);
   const [categoryData, setCategoryData] = useState<any[]>([]);
   const [monthlyData, setMonthlyData] = useState<any[]>([]);
   
   const { user } = useUserStore();
   const colorScheme = useColorScheme() ?? 'light';
   const colors = Colors[colorScheme];
+  const insets = useSafeAreaInsets();
 
   useEffect(() => {
     if (user) {
@@ -38,20 +44,21 @@ export default function AnalyticsScreen() {
       setLoading(true);
       const q = query(collection(db, 'expenses'), where('paidBy', '==', user.uid));
       const qSnap = await getDocs(q);
-      const expenses = qSnap.docs.map(doc => doc.data());
+      const expenses = qSnap.docs.map(doc => ({ ...doc.data() as any, theUserId: user.uid }));
+      setAllExpenses(expenses);
 
       // Process Data
       let total = 0;
       const cats: { [key: string]: number } = {};
       expenses.forEach(e => {
-        total += e.amount;
-        cats[e.category || 'General'] = (cats[e.category || 'General'] || 0) + e.amount;
+        total += Number(e.amount) || 0;
+        cats[e.category || 'General'] = (cats[e.category || 'General'] || 0) + (Number(e.amount) || 0);
       });
 
       setTotalSpent(total);
       setCategoryData(Object.keys(cats).map(name => ({ x: name, y: cats[name] })));
       
-      // Mock Monthly Data
+      // Mock Monthly Data for chart
       setMonthlyData([
         { x: 'Jan', y: 1200 },
         { x: 'Feb', y: 2500 },
@@ -66,19 +73,23 @@ export default function AnalyticsScreen() {
   };
 
   const handleDownloadMonthly = async () => {
-    if (!user?.uid) return;
+    if (!user?.uid || allExpenses.length === 0) {
+        showNotification('No data to generate report', 'info');
+        return;
+    }
     try {
-      // Create detailed report for current month
-      await generateGroupReport('Monthly Personal Report', [{ id: user.uid, displayName: 'You' }], [{ amount: totalSpent, description: 'Personal Spending', date: { toDate: () => new Date() }, paidBy: user.uid }]);
+      const monthName = new Date().toLocaleString('default', { month: 'long', year: 'numeric' });
+      await generatePersonalMonthlyReport(user.displayName || 'User', monthName, allExpenses);
+      showNotification('Report generated successfully!', 'success');
     } catch (err) {
-      alert('Failed to generate report');
+      showNotification('Failed to generate report', 'error');
     }
   };
 
   if (loading) return <View style={styles.loading}><ActivityIndicator size="large" color={colors.primary} /></View>;
 
   return (
-    <ScrollView style={[styles.container, { backgroundColor: colors.background }]} contentContainerStyle={styles.content}>
+    <ScrollView style={[styles.container, { backgroundColor: colors.background }]} contentContainerStyle={[styles.content, { paddingTop: Math.max(insets.top, 20) }]}>
       
       <Animated.View entering={FadeInUp.duration(600)} style={[styles.summaryCard, { backgroundColor: colors.cardBg, borderColor: colors.border }]}>
         <View style={[styles.iconBox, { backgroundColor: colors.primary + '15' }]}>

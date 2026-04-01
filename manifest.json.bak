@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "SplitNest Extension",
+  "name": "SettleStack Extension",
   "version": "1.0.0",
   "description": "Manage your shared finances directly from your browser.",
   "icons": {

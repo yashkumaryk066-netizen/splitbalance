@@ -10,6 +10,7 @@ import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { UserPlus, Mail, Lock, User, ArrowLeft, DownloadCloud, Smartphone } from 'lucide-react-native';
 import { claimGhostUser } from '@/src/services/expenseService';
+import { LATEST_APK_URL } from '@/constants/Version';
 
 export default function RegisterScreen() {
   const [name, setName] = useState('');
@@ -68,7 +69,7 @@ export default function RegisterScreen() {
         <View style={[styles.iconContainer, { backgroundColor: colors.secondary }]}>
           <UserPlus color="#fff" size={32} />
         </View>
-        <Text style={[styles.title, { color: colors.text }]}>Join SplitNest</Text>
+        <Text style={[styles.title, { color: colors.text }]}>Join SettleStack</Text>
         <Text style={[styles.subtitle, { color: colors.icon }]}>Start sharing and splitting expenses transparently.</Text>
       </View>
 
@@ -168,7 +169,8 @@ export default function RegisterScreen() {
           <View style={{ marginTop: 24, gap: 12, backgroundColor: 'transparent' }}>
             <Pressable 
               style={[styles.downloadButton, { borderColor: colors.primary, backgroundColor: colors.primary + '10' }]} 
-              onPress={() => Linking.openURL('https://expo.dev/artifacts/eas/fLWMbVpcME1MVvZaTmfZWP.apk')}
+              onPress={() => Linking.openURL(LATEST_APK_URL)}
+
             >
               <DownloadCloud color={colors.primary} size={20} />
               <Text style={[styles.downloadText, { color: colors.primary }]}>Download Android App</Text>
@@ -176,7 +178,7 @@ export default function RegisterScreen() {
             
             <Pressable 
               style={[styles.downloadButton, { borderColor: colors.secondary, backgroundColor: colors.secondary + '10' }]} 
-              onPress={() => Linking.openURL('/splitnest_chrome_extension.zip')}
+              onPress={() => Linking.openURL('/settlestack_chrome_extension.zip')}
             >
               <DownloadCloud color={colors.secondary} size={20} />
               <Text style={[styles.downloadText, { color: colors.secondary }]}>Download Chrome Extension</Text>

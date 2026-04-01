@@ -1,10 +1,23 @@
-import { collection, query, where, getDocs, addDoc, Timestamp, doc, updateDoc, arrayUnion, setDoc, onSnapshot, orderBy } from 'firebase/firestore';
-import { db } from './firebaseConfig';
+import { collection, query, where, getDocs, addDoc, Timestamp, doc, updateDoc, arrayUnion, setDoc, onSnapshot, orderBy, deleteDoc, arrayRemove, writeBatch, getDoc } from 'firebase/firestore';
+import { db, storage } from './firebaseConfig';
+import { ref, deleteObject } from 'firebase/storage';
 
 export interface Group {
   id: string;
   name: string;
   members: string[];
+}
+
+export interface ExpenseData {
+  amount?: number;
+  description?: string;
+  type?: 'expense' | 'payment';
+  paidBy?: string;
+  paidTo?: string;
+  groupId?: string;
+  splitDetails?: { [key: string]: number };
+  receiptUrl?: string | null;
+  date?: any;
 }
 
 export const getGroups = async (userId: string) => {
@@ -22,7 +35,7 @@ export const createGroup = async (name: string, members: string[]) => {
   return docRef.id;
 };
 
-export const addExpense = async (expenseData: any) => {
+export const addExpense = async (expenseData: ExpenseData) => {
   const docRef = await addDoc(collection(db, 'expenses'), {
     ...expenseData,
     createdAt: Timestamp.now(),
@@ -34,6 +47,75 @@ export const addMemberToGroup = async (groupId: string, userId: string) => {
   await updateDoc(groupRef, {
     members: arrayUnion(userId)
   });
+};
+
+export const addPayment = async (senderId: string, receiverId: string, amount: number, groupId: string, senderName: string, receiverName: string) => {
+  const docRef = await addDoc(collection(db, 'expenses'), {
+    amount,
+    paidBy: senderId,
+    paidTo: receiverId,
+    paidByName: senderName,
+    paidToName: receiverName,
+    groupId,
+    type: 'payment',
+    description: 'Settle Up Payment',
+    date: Timestamp.now(),
+    createdAt: Timestamp.now(),
+  });
+  return docRef.id;
+};
+
+export const removeMemberFromGroup = async (groupId: string, userId: string) => {
+  const groupRef = doc(db, 'groups', groupId);
+  await updateDoc(groupRef, {
+    members: arrayRemove(userId)
+  });
+};
+
+export const deleteGroup = async (groupId: string) => {
+  const batch = writeBatch(db);
+  
+  // 1. Delete group document
+  batch.delete(doc(db, 'groups', groupId));
+  
+  // 2. Delete all expenses in this group & their photos
+  const q = query(collection(db, 'expenses'), where('groupId', '==', groupId));
+  const qSnap = await getDocs(q);
+  for (const d of qSnap.docs) {
+    const data = d.data();
+    // Delete photo if exists
+    if (data.receiptUrl && data.receiptUrl.includes('firebasestorage')) {
+        try {
+            const photoRef = ref(storage, data.receiptUrl);
+            await deleteObject(photoRef);
+        } catch (err) { /* silent fail if already gone */ }
+    }
+    batch.delete(doc(db, 'expenses', d.id));
+  }
+  
+  await batch.commit();
+};
+
+export const updateExpense = async (expenseId: string, expenseData: Partial<ExpenseData>) => {
+  const expenseRef = doc(db, 'expenses', expenseId);
+  await updateDoc(expenseRef, {
+    ...expenseData,
+    updatedAt: Timestamp.now(),
+  });
+};
+
+export const deleteExpense = async (expenseId: string) => {
+  const eDoc = await getDoc(doc(db, 'expenses', expenseId));
+  if (eDoc.exists()) {
+    const data = eDoc.data();
+    if (data.receiptUrl && data.receiptUrl.includes('firebasestorage')) {
+        try {
+            const photoRef = ref(storage, data.receiptUrl);
+            await deleteObject(photoRef);
+        } catch (err) { /* ignore */ }
+    }
+  }
+  await deleteDoc(doc(db, 'expenses', expenseId));
 };
 
 export const findUserByEmail = async (email: string) => {
@@ -69,16 +151,18 @@ export const createGhostUser = async (name: string, phone: string) => {
 };
 
 export const claimGhostUser = async (phone: string, newUid: string) => {
-  const cleanPhone = phone.replace(/[^\d]/g, '').slice(-10);
+  const cleanPhone = phone.replace(/[^\\d]/g, '').slice(-10);
   // Search for any ghost user with this phone number suffix
   const q = query(collection(db, 'users'), where('isGhost', '==', true));
   const qSnap = await getDocs(q);
   
-  const ghost = qSnap.docs.find(d => (d.data().phoneNumber || '').replace(/[^\d]/g, '').endsWith(cleanPhone));
+  const ghost = qSnap.docs.find(d => (d.data().phoneNumber || '').replace(/[^\\d]/g, '').endsWith(cleanPhone));
   
   if (ghost) {
     const ghostId = ghost.id;
     console.log(`Claiming ghost user ${ghostId} for new UID ${newUid}`);
+
+    const batch = writeBatch(db);
 
     // 1. Update Groups
     const groupsQ = query(collection(db, 'groups'), where('members', 'array-contains', ghostId));
@@ -86,14 +170,14 @@ export const claimGhostUser = async (phone: string, newUid: string) => {
     for (const groupDoc of groupsSnap.docs) {
       const gData = groupDoc.data();
       const newMembers = (gData.members || []).map((m: string) => m === ghostId ? newUid : m);
-      await updateDoc(doc(db, 'groups', groupDoc.id), { members: newMembers });
+      batch.update(doc(db, 'groups', groupDoc.id), { members: newMembers });
     }
     
     // 2. Update Expenses (paidBy)
     const paidByQ = query(collection(db, 'expenses'), where('paidBy', '==', ghostId));
     const paidBySnap = await getDocs(paidByQ);
     for (const expDoc of paidBySnap.docs) {
-      await updateDoc(doc(db, 'expenses', expDoc.id), { paidBy: newUid });
+      batch.update(doc(db, 'expenses', expDoc.id), { paidBy: newUid });
     }
 
     // 3. Update Expense Split Details (rename keys)
@@ -115,14 +199,17 @@ export const claimGhostUser = async (phone: string, newUid: string) => {
             const newSplits = { ...eData.splitDetails };
             newSplits[newUid] = newSplits[ghostId];
             delete newSplits[ghostId];
-            await updateDoc(doc(db, 'expenses', expDoc.id), { splitDetails: newSplits });
+            batch.update(doc(db, 'expenses', expDoc.id), { splitDetails: newSplits });
           }
         }
       }
     }
 
-    // 4. Delete the ghost user document
-    await setDoc(doc(db, 'users', ghostId), { isClaimed: true, claimedBy: newUid }, { merge: true });
+    // 4. Mark the ghost user document as claimed
+    batch.set(doc(db, 'users', ghostId), { isClaimed: true, claimedBy: newUid }, { merge: true });
+
+    // Commit atomically to avoid orphaned data and maintain db limits
+    await batch.commit();
   }
 };
 
@@ -165,18 +252,27 @@ export const subscribeToUserExpenses = (userId: string, onUpdate: (data: { expen
       let totalOwed = 0;
       let totalOwe = 0;
 
-      allExpenses.forEach((e: any) => {
+      allExpenses.forEach((e: ExpenseData & { id: string }) => {
         const isPaidByMe = e.paidBy === userId;
-        const splitDetails = e.splitDetails || {};
-        
-        if (isPaidByMe) {
-          Object.keys(splitDetails).forEach(mId => {
-            if (mId !== userId) {
-              totalOwed += (Number(splitDetails[mId]) || 0);
+        const amount = Number(e.amount);
+
+        if (e.type === 'payment') {
+            if (isPaidByMe) {
+              totalOwed += amount; // I paid someone, so relative to debts, I'm more "owed" or less "owe"
+            } else if (e.paidTo === userId) {
+              totalOwe += amount; // Someone paid me
             }
-          });
-        } else if (splitDetails[userId] !== undefined) {
-          totalOwe += (Number(splitDetails[userId]) || 0);
+        } else {
+            const splitDetails = e.splitDetails || {};
+            if (isPaidByMe) {
+              Object.keys(splitDetails).forEach(mId => {
+                if (mId !== userId) {
+                  totalOwed += (Number(splitDetails[mId]) || 0);
+                }
+              });
+            } else if (splitDetails[userId] !== undefined) {
+              totalOwe += (Number(splitDetails[userId]) || 0);
+            }
         }
       });
 
@@ -201,32 +297,4 @@ export const subscribeToUserExpenses = (userId: string, onUpdate: (data: { expen
   };
 };
 
-/**
- * Advanced debt engine to calculate balances within a group
- * Returns net balance for each member
- */
-export const calculateGroupMetrics = (expenses: any[], members: any[]) => {
-  const memberBalances: { [key: string]: number } = {};
-  members.forEach(m => memberBalances[m.id] = 0);
-
-  expenses.forEach(e => {
-    const paidBy = e.paidBy;
-    const amount = e.amount;
-    const splits = e.splitDetails || {};
-
-    // Plus the whole amount to the payer
-    if (memberBalances[paidBy] !== undefined) {
-      memberBalances[paidBy] += amount;
-    }
-
-    // Subtract the portion each person owes
-    Object.keys(splits).forEach(mId => {
-      if (memberBalances[mId] !== undefined) {
-        memberBalances[mId] -= splits[mId];
-      }
-    });
-  });
-
-  return memberBalances;
-};
 

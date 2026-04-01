@@ -9,6 +9,8 @@ import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { LogIn, UserPlus, Mail, Lock, DownloadCloud } from 'lucide-react-native';
 import { findUserByPhone } from '@/src/services/expenseService';
+import { LATEST_APK_URL } from '@/constants/Version';
+import { CustomButton } from '@/components/CustomButton';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
@@ -20,7 +22,10 @@ export default function LoginScreen() {
   const setUser = useUserStore((state) => state.setUser);
 
   const handleLogin = async () => {
-    if (!email || !password) return;
+    if (!email || !password) {
+      alert('Email and password cannot be empty. Please fill them.');
+      return;
+    }
     setLoading(true);
     let targetEmail = email.trim().toLowerCase();
     
@@ -102,33 +107,19 @@ export default function LoginScreen() {
           />
         </View>
 
-        <Pressable 
-          style={({ pressed }) => [
-            styles.button, 
-            { 
-              backgroundColor: pressed ? colors.primary + 'CC' : colors.primary,
-              elevation: pressed ? 2 : 4,
-            }
-          ]} 
-          onPress={handleLogin}
-          disabled={loading}
-        >
-          {loading ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <>
-              <Text style={styles.buttonText}>Sign In</Text>
-              <LogIn color="#fff" size={20} />
-            </>
-          )}
-        </Pressable>
+        <CustomButton 
+          title="Sign In" 
+          onPress={handleLogin} 
+          loading={loading} 
+          icon={<LogIn color="#fff" size={20} />} 
+        />
 
         <Pressable 
           style={styles.linkButton} 
           onPress={() => router.push('/(auth)/register')}
         >
           <Text style={[styles.linkText, { color: colors.secondary }]}>
-            New to SplitNest? <Text style={{ fontWeight: '700' }}>Create an account</Text>
+            New to SettleStack? <Text style={{ fontWeight: '700' }}>Create an account</Text>
           </Text>
         </Pressable>
 
@@ -136,7 +127,8 @@ export default function LoginScreen() {
           <View style={{ marginTop: 24, gap: 12, backgroundColor: 'transparent' }}>
             <Pressable 
               style={[styles.downloadButton, { borderColor: colors.primary, backgroundColor: colors.primary + '10' }]} 
-              onPress={() => Linking.openURL('https://expo.dev/artifacts/eas/fLWMbVpcME1MVvZaTmfZWP.apk')}
+              onPress={() => Linking.openURL(LATEST_APK_URL)}
+
             >
               <DownloadCloud color={colors.primary} size={20} />
               <Text style={[styles.downloadText, { color: colors.primary }]}>Download Android App</Text>
@@ -144,7 +136,7 @@ export default function LoginScreen() {
             
             <Pressable 
               style={[styles.downloadButton, { borderColor: colors.secondary, backgroundColor: colors.secondary + '10' }]} 
-              onPress={() => Linking.openURL('/splitnest_chrome_extension.zip')}
+              onPress={() => Linking.openURL('/settlestack_chrome_extension.zip')}
             >
               <DownloadCloud color={colors.secondary} size={20} />
               <Text style={[styles.downloadText, { color: colors.secondary }]}>Download Chrome Extension</Text>
@@ -226,20 +218,6 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     height: '100%',
     paddingVertical: 10,
-  },
-  button: {
-    flexDirection: 'row',
-    height: 60,
-    borderRadius: 16,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: 12,
-    gap: 12,
-  },
-  buttonText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: '700',
   },
   linkButton: {
     alignItems: 'center',

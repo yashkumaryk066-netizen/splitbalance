@@ -18,6 +18,8 @@ export const useNotification = () => {
   return context;
 };
 
+import { useUserStore } from '@/src/store/useUserStore';
+
 export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [message, setMessage] = useState('');
   const [type, setType] = useState<NotificationType>('info');
@@ -25,8 +27,18 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
   const [translateY] = useState(new Animated.Value(-100));
 
   const showNotification = (msg: string, t: NotificationType = 'info') => {
+    // Access latest settings from store
+    const { settings } = useUserStore.getState();
+    
+    // If notifications are OFF, don't show the toast
+    if (!settings.notificationsEnabled) {
+      console.log('Notification suppressed (settings: OFF):', msg);
+      return;
+    }
+
     setMessage(msg);
     setType(t);
+
     setVisible(true);
     Animated.spring(translateY, {
       toValue: 60,

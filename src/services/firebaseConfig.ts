@@ -2,7 +2,7 @@ import { initializeApp } from 'firebase/app';
 import { initializeAuth, getAuth } from 'firebase/auth';
 // @ts-ignore
 import { getReactNativePersistence } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, getFirestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import { Platform } from 'react-native';
 // @ts-ignore - for react-native persistence
@@ -26,7 +26,13 @@ export const auth = Platform.OS === 'web'
       persistence: getReactNativePersistence(ReactNativeAsyncStorage)
     });
 
-export const db = getFirestore(app);
+// Advanced: Initialize Firestore with persistent storage to keep it FAST and FREE (reduces reads)
+export const db = initializeFirestore(app, {
+  localCache: persistentLocalCache({
+    tabManager: Platform.OS === 'web' ? persistentMultipleTabManager() : undefined
+  })
+});
+
 export const storage = getStorage(app);
 
 export default app;

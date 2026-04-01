@@ -1,22 +1,44 @@
 import React, { useEffect } from 'react';
 import { StyleSheet, ScrollView, Pressable, FlatList, ListRenderItem, Platform } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Text, View } from '@/components/Themed';
 import { useUserStore } from '@/src/store/useUserStore';
 import { useExpenseStore } from '@/src/store/useExpenseStore';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
-import { Plus, TrendingUp, TrendingDown, Receipt, ArrowRight } from 'lucide-react-native';
+import { Plus, TrendingUp, TrendingDown, Receipt, ArrowRight, Sparkles, X } from 'lucide-react-native';
 import Animated, { FadeInUp, Layout } from 'react-native-reanimated';
+import { formatCurrency } from '@/src/utils/formatters';
+import { generateSavageAdvice } from '@/src/services/aiService';
 
 export default function HomeDashboard() {
-  const { user } = useUserStore();
+  const { user, settings, updateSettings } = useUserStore();
+
   const { balance, activities } = useExpenseStore();
   const colorScheme = useColorScheme() ?? 'light';
   const colors = Colors[colorScheme];
   const router = useRouter();
+  const insets = useSafeAreaInsets();
 
   const displayActivities = activities;
+
+  useEffect(() => {
+    const fetchAIAdvice = async () => {
+      if (activities.length >= 3) {
+        const lastRun = settings.lastRoastDate || 0;
+        const now = Date.now();
+        // Check if 24 hours have passed to save API limits and keep it free
+        if (now - lastRun > 24 * 60 * 60 * 1000) {
+          const advice = await generateSavageAdvice(activities, settings);
+          if (advice) {
+            updateSettings({ lastRoastMessage: advice, lastRoastDate: now });
+          }
+        }
+      }
+    };
+    fetchAIAdvice();
+  }, [activities.length]);
 
   const renderActivity: ListRenderItem<any> = ({ item, index }) => {
     const isPaidByMe = item.paidBy === user?.uid;
@@ -55,8 +77,9 @@ export default function HomeDashboard() {
           </View>
           <View style={styles.activityAmountContainer}>
             <Text style={[styles.activityAmount, { color: isPositive ? colors.gain : colors.debt }]}>
-              {isPositive ? `+₹${displayAmount.toFixed(0)}` : `-₹${displayAmount.toFixed(0)}`}
+              {isPositive ? `+${formatCurrency(displayAmount, settings.currency)}` : `-${formatCurrency(displayAmount, settings.currency)}`}
             </Text>
+
             <Text style={[styles.activityPaidBy, { color: colors.icon }]}>
               {isPaidByMe ? 'You paid' : 'You owe'}
             </Text>
@@ -69,12 +92,13 @@ export default function HomeDashboard() {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={[styles.scrollContent, { paddingTop: Math.max(insets.top, 20) }]}>
         
         {/* Header Summary Card */}
         <Animated.View entering={FadeInUp.duration(600)} style={[styles.summaryCard, { backgroundColor: colors.primary }]}>
           <Text style={styles.summaryLabel}>Total Net Balance</Text>
-          <Text style={styles.summaryValue}>₹{balance.owed - balance.owe}</Text>
+          <Text style={styles.summaryValue}>{formatCurrency(balance.owed - balance.owe, settings.currency)}</Text>
+
           
           <View style={styles.summaryRow}>
             <View style={styles.summaryItem}>
@@ -83,7 +107,8 @@ export default function HomeDashboard() {
               </View>
               <View style={{ backgroundColor: 'transparent' }}>
                 <Text style={styles.summaryItemLabel}>You are owed</Text>
-                <Text style={styles.summaryItemValue}>₹{balance.owed || 0}</Text>
+                <Text style={styles.summaryItemValue}>{formatCurrency(balance.owed || 0, settings.currency)}</Text>
+
               </View>
             </View>
             
@@ -93,11 +118,28 @@ export default function HomeDashboard() {
               </View>
               <View style={{ backgroundColor: 'transparent' }}>
                 <Text style={styles.summaryItemLabel}>You owe</Text>
-                <Text style={styles.summaryItemValue}>₹{balance.owe || 0}</Text>
+                <Text style={styles.summaryItemValue}>{formatCurrency(balance.owe || 0, settings.currency)}</Text>
+
               </View>
             </View>
           </View>
         </Animated.View>
+
+        {/* AI Advisory Roasting Card */}
+        {settings.lastRoastMessage && (
+          <Animated.View entering={FadeInUp.delay(300).duration(600)} style={[styles.aiCard, { backgroundColor: colors.secondary + '20', borderColor: colors.secondary }]}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, backgroundColor: 'transparent' }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'transparent', gap: 6 }}>
+                <Sparkles size={16} color={colors.secondary} />
+                <Text style={{ fontWeight: '800', fontSize: 13, color: colors.secondary, textTransform: 'uppercase', letterSpacing: 0.5 }}>Daily AI Advice</Text>
+              </View>
+              <Pressable onPress={() => updateSettings({ lastRoastMessage: undefined })}>
+                <X size={16} color={colors.icon} />
+              </Pressable>
+            </View>
+            <Text style={{ color: colors.text, fontSize: 15, fontStyle: 'italic', lineHeight: 22 }}>"{settings.lastRoastMessage}"</Text>
+          </Animated.View>
+        )}
 
         {/* Quick Actions */}
         <View style={styles.sectionHeader}>
@@ -191,6 +233,12 @@ const styles = StyleSheet.create({
         shadowRadius: 20,
       }
     }),
+  },
+  aiCard: {
+    padding: 16,
+    borderRadius: 16,
+    borderWidth: 1,
+    marginBottom: 24,
   },
   summaryLabel: {
     color: 'rgba(255,255,255,0.7)',
