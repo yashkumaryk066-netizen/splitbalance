@@ -9,19 +9,35 @@ if [ -z "$URL" ]; then
 fi
 
 echo "Got APK URL: $URL"
+echo "Downloading APK to public/settlestack.apk..."
+curl -L -o public/settlestack.apk "$URL"
 
-# Update Version.ts with specific node script instead of sed to comply with AI rules
+if [ $? -ne 0 ]; then
+  echo "Downloading APK failed!"
+  exit 1
+fi
+
+# Ensure LATEST_APK_URL points to our Firebase hosting URL
 node -e "
 const fs = require('fs');
 let content = fs.readFileSync('src/constants/Version.ts', 'utf-8');
-content = content.replace(/https:\/\/expo\.dev\/artifacts\/eas\/.*\.apk/, '$URL');
+content = content.replace(/export const LATEST_APK_URL = '.*';/, \"export const LATEST_APK_URL = 'https://splitbalance-b552b.web.app/settlestack.apk';\");
 fs.writeFileSync('src/constants/Version.ts', content);
 "
 
 echo "Building Web App..."
 npm run build
 
+echo "Syncing Remote Version in Firestore..."
+npx ts-node update_version_standalone.ts
+if [ $? -ne 0 ]; then
+  echo "Firestore Version update FAILED!"
+  exit 1
+fi
+
 echo "Deploying to Firebase..."
 npx firebase-tools@13.11.4 deploy --project splitbalance-b552b --only hosting
 
 echo "Successfully Published and Deployed!"
+
+

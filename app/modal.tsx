@@ -10,8 +10,9 @@ import { StatusBar } from 'expo-status-bar';
 import { doc, getDoc } from 'firebase/firestore';
 import { deleteObject, getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import * as FileSystem from 'expo-file-system';
-import { Receipt, Tag, Wallet, X, Camera, Check, Calendar, Scan } from 'lucide-react-native';
-import React, { useEffect, useState } from 'react';
+import { evaluateAmountString } from '@/src/utils/formatters';
+import { Receipt, Tag, Wallet, X, Camera, Check, Calendar, Scan, Info } from 'lucide-react-native';
+import React, { useEffect, useState, useMemo } from 'react';
 import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, StyleSheet, TextInput } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -31,6 +32,7 @@ export default function AddExpenseModal() {
   
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
+  const [isRecurring, setIsRecurring] = useState(false);
   const [groupId, setGroupId] = useState('');
   const [category, setCategory] = useState('General');
   const [paymentMethod, setPaymentMethod] = useState('Cash');
@@ -47,8 +49,11 @@ export default function AddExpenseModal() {
   const [groupMembers, setGroupMembers] = useState<any[]>([]);
   const [splitDetails, setSplitDetails] = useState<{ [key: string]: number }>({});
   const [payerId, setPayerId] = useState<string>('');
+  const [multiPayerMode, setMultiPayerMode] = useState(false);
+  const [payerDetails, setPayerDetails] = useState<{ [key: string]: number }>({});
   const [date, setDate] = useState(new Date());
   const [scanning, setScanning] = useState(false);
+  const [currentCycleId, setCurrentCycleId] = useState<string | null>(null);
 
   const router = useRouter();
 
@@ -81,11 +86,16 @@ export default function AddExpenseModal() {
         setGroupId(data.groupId);
         setCategory(data.category);
         setPaymentMethod(data.paymentMethod);
-        setPayerId(data.paidBy);
+        setPayerId(typeof data.paidBy === 'string' ? data.paidBy : '');
+        if (typeof data.paidBy === 'object' && data.paidBy !== null) {
+          setMultiPayerMode(true);
+          setPayerDetails(data.paidBy);
+        }
         setSplitType(data.splitType);
         setSplitDetails(data.splitDetails || {});
         setImage(data.receiptUrl);
         setInitialImage(data.receiptUrl);
+        setIsRecurring(data.isRecurring || false);
         if (data.date) {
           setDate(data.date.toDate ? data.date.toDate() : new Date(data.date));
         }
@@ -110,6 +120,8 @@ export default function AddExpenseModal() {
       if (gDoc.exists()) {
         const groupData = gDoc.data();
         if (!groupData) return;
+        
+        setCurrentCycleId(groupData.currentCycleId || null);
         const mIds = groupData.members || [];
         const initialDetails: { [key: string]: number } = {};
         
@@ -156,14 +168,23 @@ export default function AddExpenseModal() {
       return;
     }
     setScanning(true);
-    // Simulate OCR delay
+    // Simulate OCR delay - this would normally call a real OCR API
     await new Promise(resolve => setTimeout(resolve, 2000));
     
-    // Simulation: Extracting "Dinner" and "1250"
-    setDescription('Restuarant Bill (Scanned)');
-    setAmount('1250');
-    setCategory('Food & Drink');
-    showNotification('Receipt scanned successfully!', 'success');
+    // Simulate different results
+    const simulations = [
+      { desc: 'Starbucks Coffee', amt: '450', cat: 'Food & Drink' },
+      { desc: 'Shell Fuel Station', amt: '2200', cat: 'Transport' },
+      { desc: 'Grocery Store #42', amt: '1580', cat: 'Groceries' },
+      { desc: 'Cinema Tickets', amt: '800', cat: 'Entertainment' }
+    ];
+    const result = simulations[Math.floor(Math.random() * simulations.length)];
+    
+    setDescription(result.desc);
+    setAmount(result.amt);
+    setCategory(result.cat);
+    
+    showNotification('Receipt analyzed! Data populated.', 'success');
     setScanning(false);
   };
 
@@ -185,7 +206,11 @@ export default function AddExpenseModal() {
 
   const handleSave = async () => {
     if (!amount || !description || !user?.uid) return;
-    const total = parseFloat(amount);
+    const total = evaluateAmountString(amount);
+    if (isNaN(total)) {
+      showNotification('Invalid amount formula', 'error');
+      return;
+    }
     let finalSplits: { [key: string]: number } = {};
 
     // Calculate split details based on type
@@ -232,27 +257,36 @@ export default function AddExpenseModal() {
 
     setLoading(true);
     try {
-      let receiptUrl = image;
+      let receiptUrl = null;
       
-      // Store image as Base64 Data URL if it's a local file
+      // Upload image to Firebase Storage if it's a local file
       if (image && !image.startsWith('http') && !image.startsWith('data:')) {
         try {
-          const base64 = await FileSystem.readAsStringAsync(image, { encoding: FileSystem.EncodingType.Base64 });
-          receiptUrl = `data:image/jpeg;base64,${base64}`;
+          const response = await fetch(image);
+          const blob = await response.blob();
+          const storageRef = ref(storage, `receipts/${user.uid}_${Date.now()}.jpg`);
+          await uploadBytes(storageRef, blob);
+          receiptUrl = await getDownloadURL(storageRef);
         } catch (err) {
-          console.warn("Base64 conversion failed:", err);
+          console.error("Image upload failed:", err);
+          showNotification('Image upload failed, saving without receipt.', 'info');
         }
+      } else {
+        receiptUrl = image;
       }
 
       const expenseData = {
         amount: total,
         description,
-        groupId,
+        groupId: groupId || 'personal',
+        cycleId: currentCycleId,
         category,
         paymentMethod,
-        paidBy: payerId || user.uid,
+        paidBy: multiPayerMode ? payerDetails : (payerId || user.uid),
         date: date,
         receiptUrl: receiptUrl || null,
+        type: 'expense' as const,
+        isRecurring: isRecurring,
         splitType,
         splitDetails: finalSplits,
       };
@@ -269,7 +303,11 @@ export default function AddExpenseModal() {
 
   const handleUpdate = async () => {
     if (!amount || !description || !user?.uid || !expenseId) return;
-    const total = parseFloat(amount);
+    const total = evaluateAmountString(amount);
+    if (isNaN(total)) {
+      showNotification('Invalid amount formula', 'error');
+      return;
+    }
     let finalSplits: { [key: string]: number } = {};
 
     // Calculate split details (duplicate of logic in handleSave for now)
@@ -295,10 +333,21 @@ export default function AddExpenseModal() {
       let receiptUrl = image;
       if (image && !image.startsWith('http') && !image.startsWith('data:')) {
         try {
-          const base64 = await FileSystem.readAsStringAsync(image, { encoding: FileSystem.EncodingType.Base64 });
-          receiptUrl = `data:image/jpeg;base64,${base64}`;
+          const response = await fetch(image);
+          const blob = await response.blob();
+          const storageRef = ref(storage, `receipts/${user.uid}_${Date.now()}.jpg`);
+          await uploadBytes(storageRef, blob);
+          receiptUrl = await getDownloadURL(storageRef);
+          
+          // Delete old image if it was on Storage
+          if (initialImage && initialImage.includes('firebasestorage')) {
+            try {
+              const oldRef = ref(storage, initialImage);
+              await deleteObject(oldRef);
+            } catch (err) { /* ignore */ }
+          }
         } catch (err) {
-          console.warn("Base64 update failed:", err);
+          console.error("Image upload update failed:", err);
         }
       }
 
@@ -308,8 +357,9 @@ export default function AddExpenseModal() {
         groupId,
         category,
         paymentMethod,
-        paidBy: payerId || user.uid,
+        paidBy: multiPayerMode ? payerDetails : (payerId || user.uid),
         receiptUrl: receiptUrl || null,
+        isRecurring: isRecurring,
         splitType,
         splitDetails: finalSplits,
         date: date,
@@ -409,12 +459,17 @@ export default function AddExpenseModal() {
               style={[styles.amountInput, { color: colors.text }]}
               placeholder="0.00"
               placeholderTextColor={colors.icon}
-              keyboardType="decimal-pad"
+              keyboardType={Platform.OS === 'ios' ? 'numbers-and-punctuation' : 'default'}
               value={amount}
               onChangeText={setAmount}
               autoFocus
             />
           </View>
+          {amount.match(/[+\-*/]/) && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: colors.primary + '10', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 20, marginTop: 8 }}>
+                <Text style={{ color: colors.primary, fontWeight: '700', fontSize: 13 }}>Sum: {settings.currency}{evaluateAmountString(amount).toFixed(2)}</Text>
+            </View>
+          )}
         </View>
 
         <View style={styles.inputCard}>
@@ -510,29 +565,72 @@ export default function AddExpenseModal() {
             
             {/* Payer Selection */}
             <View style={[styles.inputCard, { padding: 16, marginBottom: 16 }]}>
-              <Text style={[styles.label, { fontSize: 14, color: colors.icon, marginBottom: 12 }]}>Paid By:</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                {groupMembers.map((member) => (
-                  <Pressable 
-                    key={member.id}
-                    onPress={() => setPayerId(member.id)}
-                    style={[
-                      styles.payerChip,
-                      { 
-                        backgroundColor: payerId === member.id ? colors.primary : colors.cardBg,
-                        borderColor: colors.border
-                      }
-                    ]}
-                  >
-                    <View style={[styles.avatarMini, { backgroundColor: payerId === member.id ? '#ffffff30' : colors.accent }]}>
-                      <Text style={{ color: '#fff', fontSize: 10, fontWeight: 'bold' }}>{member.displayName[0]}</Text>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <Text style={[styles.label, { fontSize: 14, color: colors.icon, marginBottom: 0 }]}>
+                  {multiPayerMode ? 'Contributed By:' : 'Paid By:'}
+                </Text>
+                <Pressable 
+                  onPress={() => setMultiPayerMode(!multiPayerMode)}
+                  style={{ backgroundColor: colors.primary + '15', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 }}
+                >
+                  <Text style={{ color: colors.primary, fontSize: 12, fontWeight: '700' }}>
+                    {multiPayerMode ? 'Switch to Single Payer' : 'Multiple Payers?'}
+                  </Text>
+                </Pressable>
+              </View>
+
+              {!multiPayerMode ? (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                  {groupMembers.map((member) => (
+                    <Pressable 
+                      key={member.id}
+                      onPress={() => setPayerId(member.id)}
+                      style={[
+                        styles.payerChip,
+                        { 
+                          backgroundColor: payerId === member.id ? colors.primary : colors.cardBg,
+                          borderColor: colors.border
+                        }
+                      ]}
+                    >
+                      <View style={[styles.avatarMini, { backgroundColor: payerId === member.id ? '#ffffff30' : colors.accent }]}>
+                        <Text style={{ color: '#fff', fontSize: 10, fontWeight: 'bold' }}>{member.displayName[0]}</Text>
+                      </View>
+                      <Text style={{ color: payerId === member.id ? '#fff' : colors.text, fontSize: 12, fontWeight: '600' }}>
+                        {member.id === user?.uid ? 'You' : member.displayName}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </ScrollView>
+              ) : (
+                <View>
+                  {groupMembers.map((member) => (
+                    <View key={member.id} style={[styles.splitMemberRow, { borderBottomColor: colors.border + '30', paddingVertical: 8 }]}>
+                      <Text style={{ color: colors.text, flex: 1, fontSize: 14 }}>{member.displayName}</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                        <Text style={{ color: colors.text, marginRight: 4, opacity: 0.7 }}>{settings.currency}</Text>
+                        <TextInput
+                          style={[styles.splitInput, { color: colors.text, borderColor: colors.border, height: 32, width: 90 }]}
+                          value={String(payerDetails[member.id] || '')}
+                          onChangeText={(val) => {
+                            const num = parseFloat(val) || 0;
+                            setPayerDetails(prev => ({ ...prev, [member.id]: num }));
+                          }}
+                          keyboardType="decimal-pad"
+                          placeholder="0"
+                        />
+                      </View>
                     </View>
-                    <Text style={{ color: payerId === member.id ? '#fff' : colors.text, fontSize: 12, fontWeight: '600' }}>
-                      {member.id === user?.uid ? 'You' : member.displayName}
+                  ))}
+                  <View style={{ marginTop: 10, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 10 }}>
+                    <Text style={{ color: colors.icon, fontSize: 12 }}>
+                      Total Contributions: {settings.currency}{Object.values(payerDetails).reduce((a, b) => a + b, 0).toFixed(2)}
+                      {Math.abs(Object.values(payerDetails).reduce((a, b) => a + b, 0) - parseFloat(amount)) > 0.1 && 
+                        ` (Target: ${settings.currency}${amount})`}
                     </Text>
-                  </Pressable>
-                ))}
-              </ScrollView>
+                  </View>
+                </View>
+              )}
             </View>
 
             {/* Split Strategy */}

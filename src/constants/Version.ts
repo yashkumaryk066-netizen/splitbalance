@@ -1,2 +1,3 @@
-export const APP_VERSION = '1.2.7';
-export const LATEST_APK_URL = 'https://expo.dev/artifacts/eas/aFRkHPK1KVXdvhJo7sHYd1.apk';
+export const APP_VERSION = '1.3.3';
+export const LATEST_APK_URL = 'https://splitbalance-b552b.web.app/settlestack.apk';
+

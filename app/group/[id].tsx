@@ -3,7 +3,7 @@ import { Text, View } from '@/components/Themed';
 import { useColorScheme } from '@/components/useColorScheme';
 import Colors from '@/constants/Colors';
 import { getPhoneContacts, MobileContact } from '@/src/services/contactService';
-import { addMemberToGroup, addPayment, createGhostUser, deleteExpense, deleteGroup, findUserByEmail, findUserByPhone, removeMemberFromGroup } from '@/src/services/expenseService';
+import { addMemberToGroup, addPayment, closeCurrentCycle, createGhostUser, deleteExpense, deleteGroup, findUserByEmail, findUserByPhone, removeMemberFromGroup, getGroupCycles, reopenCycle } from '@/src/services/expenseService';
 import { calculateGroupMetrics } from '@/src/utils/expenseUtils';
 import { db } from '@/src/services/firebaseConfig';
 import { generateGroupReport } from '@/src/services/pdfService';
@@ -11,6 +11,7 @@ import { openUPIPayment } from '@/src/services/paymentService';
 import { useUserStore } from '@/src/store/useUserStore';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { addDoc, collection, doc, getDoc, onSnapshot, orderBy, query, where, updateDoc, arrayUnion } from 'firebase/firestore';
+import { evaluateAmountString } from '@/src/utils/formatters';
 import { ArrowLeft, Contact, CreditCard, Download, Filter, MessageSquare, Plus, Receipt, Smartphone, TrendingUp, UserPlus, Wallet, X } from 'lucide-react-native';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Modal, Platform, Pressable, FlatList as RNFlatList, ScrollView, StyleSheet, TextInput, Share, Image } from 'react-native';
@@ -34,6 +35,13 @@ export default function GroupDetailScreen() {
   const [selectedPayee, setSelectedPayee] = useState<any>(null);
   const [settling, setSettling] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedExpense, setSelectedExpense] = useState<any>(null);
+  const [closingCycle, setClosingCycle] = useState(false);
+  const [viewHistory, setViewHistory] = useState(false);
+  const [showCloseModal, setShowCloseModal] = useState(false);
+  const [cycles, setCycles] = useState<any[]>([]);
+  const [selectedCycleId, setSelectedCycleId] = useState<string | null>(null);
+  const [showCyclePicker, setShowCyclePicker] = useState(false);
   
   const { user, settings } = useUserStore();
 
@@ -59,13 +67,14 @@ export default function GroupDetailScreen() {
   };
 
   const handleSettleUp = async () => {
-    if (!selectedPayee || !settleAmount || parseFloat(settleAmount) <= 0) {
+    const totalSettleAmount = evaluateAmountString(settleAmount);
+    if (!selectedPayee || isNaN(totalSettleAmount) || totalSettleAmount <= 0) {
       showNotification('Please enter a valid amount', 'error');
       return;
     }
     setSettling(true);
     try {
-      await addPayment(user!.uid, selectedPayee.id, parseFloat(settleAmount), id as string, user!.displayName || 'You', selectedPayee.displayName);
+      await addPayment(user!.uid, selectedPayee.id, totalSettleAmount, id as string, group?.currentCycleId || 'uncategorized', user!.displayName || 'You', selectedPayee.displayName);
       showNotification('Payment recorded!', 'success');
       setSettleModalVisible(false);
       setSettleAmount('');
@@ -111,13 +120,14 @@ export default function GroupDetailScreen() {
   const colors = Colors[colorScheme];
   const router = useRouter();
   const insets = useSafeAreaInsets();
-
   useEffect(() => {
     if (!id) return;
 
     setLoading(true);
     
     // 1. Real-time Group & Members Listen
+    let unsubExpenses: (() => void) | null = null;
+
     const unsubGroup = onSnapshot(doc(db, 'groups', id as string), async (gSnap) => {
       if (gSnap.exists()) {
         const gData = gSnap.data();
@@ -125,42 +135,71 @@ export default function GroupDetailScreen() {
         
         // Fetch full member details
         const memberIds = gData.members || [];
-        const memberData: any[] = [];
-        
-        // Use Promise.all for faster member fetching
         const mDocs = await Promise.all(
           memberIds.map((mId: string) => getDoc(doc(db, 'users', mId)))
         );
         
-        mDocs.forEach((mDoc, index) => {
-          if (mDoc.exists()) {
-            memberData.push({ id: memberIds[index], ...mDoc.data() });
+        const mData = mDocs.map((mDoc, index) => ({
+          id: memberIds[index],
+          ...(mDoc.exists() ? mDoc.data() : { displayName: 'Unknown User' })
+        }));
+        setMembers(mData);
+
+        // Fetch Cycles
+        const allCycles = await getGroupCycles(id as string);
+        setCycles(allCycles);
+        if (!selectedCycleId && !viewHistory) {
+          setSelectedCycleId(gData.currentCycleId || null);
+        }
+
+        // --- AUTOMATION: Detect if month has changed ---
+        const lastCycle = allCycles.length > 0 ? allCycles[0] as any : null; // Sorted desc
+        const currentMonthName = new Date().toLocaleString('default', { month: 'long', year: 'numeric' });
+        
+        if (lastCycle && lastCycle.status === 'OPEN' && lastCycle.name !== currentMonthName) {
+           // Auto-suggestion: A new month is detected
+           Alert.alert(
+             'New Month Detected!',
+             `It is now ${currentMonthName}. Would you like to close the cycle for ${lastCycle.name} and carry-forward the balances?`,
+             [
+               { text: 'Later', style: 'cancel' },
+               { text: 'Yes, Close & Carry Dues', onPress: confirmCloseCycle }
+             ]
+           );
+        }
+        // ----------------------------------------------
+
+        // 2. Real-time Expenses Listen
+        if (unsubExpenses) unsubExpenses();
+        
+        let expensesRef = collection(db, 'expenses');
+        let expenseQuery;
+        
+        if (viewHistory) {
+          expenseQuery = query(expensesRef, where('groupId', '==', id), orderBy('date', 'desc'));
+        } else {
+          const cycleToUse = selectedCycleId || gData.currentCycleId;
+          if (cycleToUse) {
+            expenseQuery = query(expensesRef, where('groupId', '==', id), where('cycleId', '==', cycleToUse), orderBy('date', 'desc'));
           } else {
-            // Placeholder for missing users
-            memberData.push({ id: memberIds[index], displayName: 'Unknown User' });
+            expenseQuery = query(expensesRef, where('groupId', '==', id), orderBy('date', 'desc'));
           }
+        }
+
+        unsubExpenses = onSnapshot(expenseQuery, (qSnap) => {
+          setExpenses(qSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        }, (err) => {
+          console.error("Expense listen error:", err);
         });
-        setMembers(memberData);
       }
       setLoading(false);
-    }, (err) => {
-      console.error("Group listen error:", err);
-      setLoading(false);
-    });
-
-    // 2. Real-time Expenses Listen
-    const q = query(collection(db, 'expenses'), where('groupId', '==', id), orderBy('date', 'desc'));
-    const unsubExpenses = onSnapshot(q, (qSnap) => {
-      setExpenses(qSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    }, (err) => {
-      console.error("Expense listen error:", err);
     });
 
     return () => {
       unsubGroup();
-      unsubExpenses();
+      if (unsubExpenses) unsubExpenses();
     };
-  }, [id]);
+  }, [id, viewHistory, selectedCycleId]);
 
   const loadData = () => {
     // Legacy call - listeners handle it now
@@ -221,6 +260,7 @@ export default function GroupDetailScreen() {
       <Animated.View entering={FadeInUp.delay(index * 100)} style={[styles.expenseCard, { backgroundColor: colors.cardBg, borderColor: colors.border }]}>
         <Pressable 
           onLongPress={handleExpenseOptions}
+          onPress={() => setSelectedExpense(item)}
           style={{ flexDirection: 'row', alignItems: 'center', flex: 1, backgroundColor: 'transparent' }}
         >
           <View style={[styles.expenseDateContainer, { backgroundColor: colors.primary + '10' }]}>
@@ -231,13 +271,17 @@ export default function GroupDetailScreen() {
             <Text style={styles.expenseTitle}>{item.description}</Text>
             <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'transparent' }}>
               <Text style={[styles.expenseSub, { color: colors.icon }]}>
-                {payerName} paid <Text style={{ fontWeight: '700', color: colors.text }}>{settings.currency}{item.amount}</Text>
-
+                 {item.type === 'carryForward' ? (
+                   <Text style={{ fontWeight: '500' }}>Balance from previous cycle</Text>
+                 ) : (
+                   `${payerName} paid `
+                 )}
+                 {item.type !== 'carryForward' && <Text style={{ fontWeight: '700', color: colors.text }}>{settings.currency}{item.amount}</Text>}
               </Text>
             </View>
             {item.splitType && (
               <Text style={{ fontSize: 10, color: colors.icon, marginTop: 2, fontStyle: 'italic' }}>
-                Split: {item.splitType}
+                Mode: {item.splitType}
               </Text>
             )}
           </View>
@@ -247,7 +291,6 @@ export default function GroupDetailScreen() {
             </Text>
             <Text style={[styles.expenseStatusAmount, { color: statusColor, fontSize: 16 }]}>
               {statusAmount > 0 ? `${settings.currency}${statusAmount.toFixed(0)}` : statusText === 'Not involved' ? '-' : `${settings.currency}0`}
-
             </Text>
           </View>
         </Pressable>
@@ -255,7 +298,25 @@ export default function GroupDetailScreen() {
     );
   };
 
-  const handleSettleUpMain = async () => { // Renamed to avoid conflict with modal's handleSettleUp
+  const handleCloseMonth = () => {
+    setShowCloseModal(true);
+  };
+
+  const confirmCloseCycle = async () => {
+    const cycleName = new Date().toLocaleString('default', { month: 'long', year: 'numeric' });
+    setClosingCycle(true);
+    try {
+      await closeCurrentCycle(id as string, members, expenses, cycleName);
+      showNotification('New cycle started! Old dues carried forward.', 'success');
+      setShowCloseModal(false);
+    } catch (err) {
+      showNotification('Failed to close cycle', 'error');
+    } finally {
+      setClosingCycle(false);
+    }
+  };
+
+  const handleSettleUpMain = async () => {
     const metrics = calculateGroupMetrics(expenses, members);
     const myNet = metrics[user?.uid || ''] || 0;
     
@@ -264,41 +325,21 @@ export default function GroupDetailScreen() {
       return;
     }
 
-    setLoading(true);
-    try {
-      // Create a settlement record
-      const isOwed = myNet > 0;
-      const amount = Math.abs(myNet);
-      
-      const settlementData = {
-        amount,
-        description: isOwed ? `Received Payment` : `Paid Group Dues`,
-        groupId: id,
-        category: 'Settlement',
-        paidBy: isOwed ? (members.find(m => m.id !== user?.uid)?.id || 'Other') : user?.uid,
-        date: new Date(),
-        type: 'settlement',
-        splitDetails: {
-          [user?.uid || '']: isOwed ? amount : 0,
-          // If I was owed 100, the "paidBy" member paid me 100.
-          // So the "payer" gets +100 and I (splitDetails) get -100.
-          // This balances out.
-        }
-      };
-
-      await addDoc(collection(db, 'expenses'), settlementData);
-      showNotification('Balance Settled!', 'success');
-    } catch (err) {
-      console.error(err);
-      showNotification('Failed to settle up', 'error');
-    } finally {
-      setLoading(false);
+    const isOwed = myNet > 0;
+    if (isOwed) {
+      showNotification('Wait for others to pay you or tell them to Settle Up!', 'info');
+      return;
     }
+
+    setSelectedPayee(members.filter(m => m.id !== user?.uid).sort((a,b) => (metrics[b.id]||0) - (metrics[a.id]||0))[0]);
+    setSettleAmount(Math.abs(myNet).toFixed(0));
+    setSettleModalVisible(true);
   };
 
   const handleDownloadReport = async () => {
     try {
-      await generateGroupReport(group?.name || 'Group', members, expenses);
+      const cycleToReport = cycles.find(c => c.id === selectedCycleId);
+      await generateGroupReport(`${group?.name}${cycleToReport ? ' - ' + cycleToReport.name : ''}`, members, expenses, settings.currency);
       showNotification('Report generated!', 'success');
     } catch (err) {
       showNotification('Failed to generate report', 'error');
@@ -418,37 +459,38 @@ export default function GroupDetailScreen() {
         ),
         headerRight: () => (
           <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'transparent' }}>
-            <Pressable onPress={() => {
-              Alert.alert(
-                'Group Settings',
-                'What would you like to do?',
-                [
-                  { text: 'Delete Group', style: 'destructive', onPress: () => {
-                    Alert.alert(
-                      'Delete Group',
-                      'Are you sure? This will delete all expenses in this group permanently.',
-                      [
-                        { text: 'Cancel', style: 'cancel' },
-                        { text: 'Delete', style: 'destructive', onPress: async () => {
-                          try {
-                            await deleteGroup(id as string);
-                            showNotification('Group deleted', 'success');
-                            router.replace('/(tabs)/groups');
-                          } catch (err) {
-                            showNotification('Failed to delete group', 'error');
-                          }
-                        }}
-                      ]
-                    );
-                  }},
-                  { text: 'Cancel', style: 'cancel' }
-                ]
-              );
-            }}>
-              <Filter color={colors.icon} size={24} style={{ marginRight: 16 }} />
-            </Pressable>
             <Pressable onPress={() => router.push(`/group/${id}/chat`)}>
               <MessageSquare color={colors.primary} size={24} style={{ marginRight: 16 }} />
+            </Pressable>
+            <Pressable onPress={() => {
+              const options = [
+                { text: 'Cycle History', onPress: () => setShowCyclePicker(true) },
+                { text: 'Download Month Report', onPress: handleDownloadReport },
+                { text: 'Invite Member', onPress: handleInvite },
+                { text: 'Leave Group', style: 'destructive' as const, onPress: () => {
+                  Alert.alert('Leave Group', 'Are you sure you want to leave this group?', [
+                    { text: 'Cancel', style: 'cancel' },
+                    { text: 'Leave', style: 'destructive', onPress: async () => {
+                       await removeMemberFromGroup(id as string, user!.uid);
+                       router.replace('/(tabs)/groups');
+                    }}
+                  ]);
+                }},
+                { text: 'Delete Group', style: 'destructive' as const, onPress: () => {
+                  Alert.alert('Delete Group', 'This will erase ALL data. Continue?', [
+                    { text: 'Cancel', style: 'cancel' },
+                    { text: 'Delete', style: 'destructive', onPress: async () => {
+                      await deleteGroup(id as string);
+                      router.replace('/(tabs)/groups');
+                    }}
+                  ]);
+                }},
+                { text: 'Cancel', style: 'cancel' as const }
+              ];
+              
+              Alert.alert('Group Settings', 'Manage your group', options);
+            }}>
+              <Filter color={colors.icon} size={24} style={{ marginRight: 16 }} />
             </Pressable>
           </View>
         )
@@ -465,6 +507,17 @@ export default function GroupDetailScreen() {
           <Pressable onPress={handleSettleUpMain} style={[styles.settleButton, { backgroundColor: colors.primary }]}>
             <Text style={styles.settleText}>Settle Up</Text>
           </Pressable>
+        </View>
+
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, backgroundColor: 'transparent' }}>
+           <Pressable onPress={() => setShowCyclePicker(true)} style={{ flex: 1 }}>
+             <Text style={[styles.totalLabel, { color: colors.icon, marginBottom: 0 }]}>
+                {viewHistory ? 'All History' : cycles.find(c => c.id === selectedCycleId)?.name || 'Current Cycle'} ⌄
+             </Text>
+           </Pressable>
+           <Pressable onPress={() => setViewHistory(!viewHistory)} style={{ backgroundColor: colors.primary + '10', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 }}>
+             <Text style={{ color: colors.primary, fontSize: 12, fontWeight: '700' }}>{viewHistory ? 'Switch to Cycle' : 'View All Time'}</Text>
+           </Pressable>
         </View>
         
         <View style={styles.debtTiles}>
@@ -502,11 +555,28 @@ export default function GroupDetailScreen() {
             <Smartphone size={18} color="#fff" />
             <Text style={styles.actionButtonText}>Invite</Text>
           </Pressable>
+          <Pressable 
+            onPress={handleCloseMonth}
+            style={[styles.actionButton, { backgroundColor: colors.secondary }]}
+            disabled={closingCycle}
+          >
+            {closingCycle ? <ActivityIndicator color="#fff" size="small" /> : <TrendingUp size={18} color="#fff" />}
+            <Text style={styles.actionButtonText}>Close Month</Text>
+          </Pressable>
         </View>
       </View>
 
       <FlatList
-        data={expenses.filter(e => e.description.toLowerCase().includes(searchQuery.toLowerCase()))}
+        data={expenses.filter(e => {
+          const query = searchQuery.toLowerCase();
+          const payer = members.find(m => m.id === e.paidBy);
+          return (
+            e.description.toLowerCase().includes(query) ||
+            (payer?.displayName || '').toLowerCase().includes(query) ||
+            (e.category || '').toLowerCase().includes(query) ||
+            String(e.amount).includes(query)
+          );
+        })}
         renderItem={renderExpense}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.listContent}
@@ -624,7 +694,14 @@ export default function GroupDetailScreen() {
         ListEmptyComponent={
           <View style={styles.emptyState}>
             <Receipt size={48} color={colors.icon} style={{ opacity: 0.3, marginBottom: 16 }} />
-            <Text style={[styles.emptyText, { color: colors.icon }]}>No expenses yet. Tap "+" to start sharing!</Text>
+            <Text style={[styles.emptyText, { color: colors.icon, fontWeight: '700' }]}>
+               {searchQuery ? 'No matching expenses found' : 
+                viewHistory ? 'No group history found yet' : 
+                `New cycle started for ${cycles.find(c => c.id === selectedCycleId)?.name || 'this month'}!`}
+            </Text>
+            <Text style={[styles.emptyText, { color: colors.icon, fontSize: 12, marginTop: 4 }]}>
+               {searchQuery ? 'Try a different search term' : 'Tap the "+" button to record a new expense.'}
+            </Text>
           </View>
         }
       />
@@ -769,10 +846,15 @@ export default function GroupDetailScreen() {
                 style={[styles.input, { color: colors.text, borderColor: colors.border }]}
                 placeholder="Enter amount"
                 placeholderTextColor={colors.icon}
-                keyboardType="numeric"
+                keyboardType={Platform.OS === 'ios' ? 'numbers-and-punctuation' : 'default'}
                 value={settleAmount}
                 onChangeText={setSettleAmount}
               />
+              {settleAmount.match(/[+\-*/]/) && (
+                <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: colors.primary + '10', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 20, marginBottom: 12 }}>
+                    <Text style={{ color: colors.primary, fontWeight: '700', fontSize: 13 }}>Sum: {settings.currency}{evaluateAmountString(settleAmount).toFixed(2)}</Text>
+                </View>
+              )}
 
               <Pressable
                 style={[styles.actionButton, { backgroundColor: colors.primary }]}
@@ -786,12 +868,217 @@ export default function GroupDetailScreen() {
         </View>
       </Modal>
 
+      {/* Cycle Closing Summary Modal */}
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={showCloseModal}
+        onRequestClose={() => setShowCloseModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+           <Pressable style={StyleSheet.absoluteFill} onPress={() => setShowCloseModal(false)} />
+           <View style={[styles.modalContent, { backgroundColor: colors.background, paddingBottom: Math.max(insets.bottom, 24), borderTopLeftRadius: 32, borderTopRightRadius: 32 }]}>
+              <View style={[styles.dragHandle, { backgroundColor: colors.border }]} />
+              <View style={styles.modalHeader}>
+                 <Text style={styles.modalTitle}>Cycle Summary</Text>
+                 <Pressable onPress={() => setShowCloseModal(false)} style={{ padding: 8 }}>
+                    <X size={24} color={colors.text} />
+                 </Pressable>
+              </View>
+
+              <ScrollView style={styles.modalBody}>
+                 <View style={{ marginBottom: 24, backgroundColor: 'transparent', gap: 12 }}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', backgroundColor: 'transparent' }}>
+                       <Text style={{ color: colors.icon }}>Total Group Spending</Text>
+                       <Text style={{ color: colors.text, fontWeight: '700' }}>{settings.currency}{expenses.reduce((a, b) => a + (b.amount || 0), 0).toFixed(0)}</Text>
+                    </View>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', backgroundColor: 'transparent' }}>
+                       <Text style={{ color: colors.icon }}>Expenses Tracked</Text>
+                       <Text style={{ color: colors.text, fontWeight: '700' }}>{expenses.length}</Text>
+                    </View>
+                 </View>
+
+                 <Text style={[styles.listTitle, { color: colors.icon, marginBottom: 16 }]}>Carry Forward Dues</Text>
+                 <View style={[styles.card, { backgroundColor: colors.primary + '05', borderColor: colors.primary + '20', marginBottom: 24 }]}>
+                    {(() => {
+                      const metrics = calculateGroupMetrics(expenses, members);
+                      const nonZeroMembers = Object.entries(metrics).filter(([_, bal]) => Math.abs(bal) > 0.1);
+                      
+                      if (nonZeroMembers.length === 0) {
+                        return <Text style={{ padding: 12, textAlign: 'center', color: colors.icon }}>Everyone is perfectly settled!</Text>;
+                      }
+
+                      return nonZeroMembers.map(([mid, bal]) => {
+                        const m = members.find(u => u.id === mid);
+                        return (
+                          <View key={mid} style={{ flexDirection: 'row', alignItems: 'center', padding: 12, borderBottomWidth: 1, borderBottomColor: colors.border + '20', backgroundColor: 'transparent' }}>
+                             <View style={[styles.memberAvatar, { width: 32, height: 32, marginRight: 12, backgroundColor: bal > 0 ? colors.gain + '20' : colors.debt + '20' }]}>
+                                <Text style={{ color: bal > 0 ? colors.gain : colors.debt }}>{m?.displayName?.[0]}</Text>
+                             </View>
+                             <Text style={{ color: colors.text, flex: 1 }}>{m?.displayName}</Text>
+                             <Text style={{ fontWeight: '700', color: bal > 0 ? colors.gain : colors.debt }}>
+                                {bal > 0 ? '+' : '-'}{settings.currency}{Math.abs(bal).toFixed(0)}
+                             </Text>
+                          </View>
+                        );
+                      });
+                    })()}
+                 </View>
+
+                 <Text style={{ fontSize: 13, color: colors.icon, marginBottom: 24, textAlign: 'center' }}>
+                   Closing this month will archive these expenses and start a fresh list. The dues shown above will be carried forward.
+                 </Text>
+
+                 <Pressable 
+                   style={[styles.actionButton, { backgroundColor: colors.primary, height: 56 }]}
+                   onPress={confirmCloseCycle}
+                   disabled={closingCycle}
+                 >
+                   {closingCycle ? <ActivityIndicator color="#fff" /> : <Text style={styles.actionButtonText}>Start New Cycle</Text>}
+                 </Pressable>
+              </ScrollView>
+           </View>
+        </View>
+      </Modal>
+
+      {/* Expense Detail Modal */}
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={!!selectedExpense}
+        onRequestClose={() => setSelectedExpense(null)}
+      >
+        <View style={styles.modalOverlay}>
+           <Pressable style={StyleSheet.absoluteFill} onPress={() => setSelectedExpense(null)} />
+           <View style={[styles.modalContent, { backgroundColor: colors.background, paddingBottom: Math.max(insets.bottom, 24), borderTopLeftRadius: 32, borderTopRightRadius: 32 }]}>
+              <View style={[styles.dragHandle, { backgroundColor: colors.border }]} />
+              <View style={styles.modalHeader}>
+                 <View style={{ backgroundColor: 'transparent' }}>
+                   <Text style={styles.modalTitle}>{selectedExpense?.description}</Text>
+                   <Text style={{ color: colors.icon }}>{selectedExpense?.date?.toDate ? selectedExpense?.date?.toDate().toLocaleString() : selectedExpense?.date?.toLocaleString()}</Text>
+                 </View>
+                 <Pressable onPress={() => setSelectedExpense(null)} style={{ padding: 8 }}>
+                    <X size={24} color={colors.text} />
+                 </Pressable>
+              </View>
+
+              <View style={styles.modalBody}>
+                 <View style={{ alignItems: 'center', marginBottom: 24, backgroundColor: 'transparent' }}>
+                    <Text style={{ fontSize: 42, fontWeight: '800', color: colors.text }}>{settings.currency}{selectedExpense?.amount}</Text>
+                    <Text style={{ color: colors.icon }}>Total Spent</Text>
+                 </View>
+
+                 <View style={[styles.card, { backgroundColor: colors.cardBg, borderColor: colors.border, padding: 16 }]}>
+                    <Text style={[styles.listTitle, { color: colors.icon, marginBottom: 16 }]}>Who paid?</Text>
+                    {(() => {
+                        const paidBy = selectedExpense?.paidBy;
+                        if (typeof paidBy === 'string') {
+                           const payer = members.find(m => m.id === paidBy);
+                           return (
+                             <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'transparent' }}>
+                               <View style={[styles.memberAvatar, { width: 32, height: 32, marginRight: 12 }]}>
+                                  <Text>{payer?.displayName?.[0]}</Text>
+                               </View>
+                               <Text style={{ color: colors.text, flex: 1, fontWeight: '600' }}>{payer?.displayName || 'Unknown'}</Text>
+                               <Text style={{ color: colors.text, fontWeight: '700' }}>{settings.currency}{selectedExpense?.amount}</Text>
+                             </View>
+                           );
+                        } else if (typeof paidBy === 'object' && paidBy !== null) {
+                           return Object.entries(paidBy).map(([mid, amt]) => {
+                              const payer = members.find(m => m.id === mid);
+                              return (
+                                <View key={mid} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, backgroundColor: 'transparent' }}>
+                                  <View style={[styles.memberAvatar, { width: 32, height: 32, marginRight: 12 }]}>
+                                     <Text>{payer?.displayName?.[0]}</Text>
+                                  </View>
+                                  <Text style={{ color: colors.text, flex: 1 }}>{payer?.displayName || 'Unknown'}</Text>
+                                  <Text style={{ color: colors.text, fontWeight: '600' }}>{settings.currency}{amt as number}</Text>
+                                </View>
+                              );
+                           });
+                        }
+                    })()}
+                 </View>
+
+                 <View style={[styles.card, { backgroundColor: colors.cardBg, borderColor: colors.border, padding: 16, marginTop: 16 }]}>
+                    <Text style={[styles.listTitle, { color: colors.icon, marginBottom: 16 }]}>Who owes what?</Text>
+                    {Object.entries(selectedExpense?.splitDetails || {}).map(([mid, amt]) => {
+                        const member = members.find(m => m.id === mid);
+                        return (
+                          <View key={mid} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, backgroundColor: 'transparent' }}>
+                            <View style={[styles.memberAvatar, { width: 32, height: 32, marginRight: 12, backgroundColor: colors.secondary + '10' }]}>
+                               <Text style={{ fontSize: 12 }}>{member?.displayName?.[0]}</Text>
+                            </View>
+                            <Text style={{ color: colors.text, flex: 1 }}>{member?.displayName || 'Unknown'}</Text>
+                            <Text style={{ color: colors.text }}>{settings.currency}{Number(amt).toFixed(2)}</Text>
+                          </View>
+                        );
+                    })}
+                 </View>
+              </View>
+           </View>
+        </View>
+      </Modal>
+
       <Pressable 
         style={({ pressed }) => [styles.fab, { backgroundColor: colors.primary, opacity: pressed ? 0.9 : 1 }]}
         onPress={() => router.push({ pathname: '/modal', params: { groupId: id } })}
       >
         <Plus color="#fff" size={28} />
       </Pressable>
+
+      {/* Cycle Picker Modal */}
+      <Modal visible={showCyclePicker} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setShowCyclePicker(false)} />
+          <View style={[styles.modalContent, { backgroundColor: colors.background, maxHeight: '80%' }]}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Select Cycle</Text>
+              <Pressable onPress={() => setShowCyclePicker(false)}><X size={24} color={colors.text} /></Pressable>
+            </View>
+            <FlatList
+              data={cycles}
+              keyExtractor={item => item.id}
+              renderItem={({ item }) => (
+                <Pressable 
+                  onPress={() => {
+                    setSelectedCycleId(item.id);
+                    setViewHistory(false);
+                    setShowCyclePicker(false);
+                  }}
+                  style={{ 
+                    padding: 16, 
+                    borderBottomWidth:1, 
+                    borderBottomColor: colors.border,
+                    backgroundColor: selectedCycleId === item.id ? colors.primary + '10' : 'transparent',
+                    flexDirection: 'row',
+                    justifyContent: 'space-between'
+                  }}
+                >
+                  <Text style={{ color: colors.text, fontWeight: selectedCycleId === item.id ? '700' : '400' }}>{item.name}</Text>
+                  {item.status === 'CLOSED' && (
+                    <Pressable 
+                      onPress={async () => {
+                        Alert.alert('Re-open Cycle', 'Bring archived expenses back to active?', [
+                          { text: 'Cancel', style: 'cancel' },
+                          { text: 'Re-open', onPress: async () => {
+                             await reopenCycle(id as string, item.id);
+                             showNotification('Cycle re-opened!', 'success');
+                             setShowCyclePicker(false);
+                          }}
+                        ]);
+                      }}
+                      style={{ backgroundColor: colors.secondary + '20', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 }}
+                    >
+                      <Text style={{ color: colors.secondary, fontSize: 10, fontWeight: '700' }}>RE-OPEN</Text>
+                    </Pressable>
+                  )}
+                </Pressable>
+              )}
+            />
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -799,6 +1086,14 @@ export default function GroupDetailScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  dragHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    alignSelf: 'center',
+    marginBottom: 16,
+    opacity: 0.3,
   },
   loading: {
     flex: 1,

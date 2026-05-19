@@ -60,6 +60,16 @@ function RootLayoutNav() {
   useEffect(() => {
     checkUpdates();
   }, []);
+  
+  const isNewer = (latest: string, current: string) => {
+    const l = latest.split('.').map(Number);
+    const c = current.split('.').map(Number);
+    for (let i = 0; i < 3; i++) {
+        if (l[i] > c[i]) return true;
+        if (l[i] < c[i]) return false;
+    }
+    return false;
+  };
 
   const checkUpdates = async () => {
       try {
@@ -67,8 +77,8 @@ function RootLayoutNav() {
           if (vDoc.exists()) {
               const { latestVersion, downloadUrl, message, mandatory } = vDoc.data();
               
-              // Only show if the version is DIFFERENT from current app version
-              if (latestVersion !== APP_VERSION) {
+              // Only show if the version is NEWER than current app version
+              if (latestVersion && APP_VERSION && isNewer(latestVersion, APP_VERSION)) {
                   const AsyncStorage = require('@react-native-async-storage/async-storage').default;
                   const lastIgnored = await AsyncStorage.getItem('last_ignored_version');
                   

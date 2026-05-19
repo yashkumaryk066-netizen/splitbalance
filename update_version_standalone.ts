@@ -16,10 +16,10 @@ const db = getFirestore(app);
 const updateVersion = async () => {
     try {
         await setDoc(doc(db, 'app_config', 'version'), {
-            latestVersion: '1.2.7',
-            downloadUrl: 'https://expo.dev/artifacts/eas/aFRkHPK1KVXdvhJo7sHYd1.apk',
+            latestVersion: '1.3.3',
+            downloadUrl: 'https://splitbalance-b552b.web.app/settlestack.apk',
             mandatory: false,
-            message: 'Free Photo Saving Update! No Storage Bucket Needed 🚀'
+            message: 'Stable update 1.3.3! Split your balances with the best experience yet. 🚀🔥'
         });
         console.log('Successfully updated version in Firestore!');
         process.exit(0);

@@ -18,9 +18,17 @@ export const calculateGroupMetrics = (expenses: any[], members: any[]) => {
       const paidBy = e.paidBy;
       const splits = e.splitDetails || {};
 
-      // Plus the whole amount to the payer
-      if (memberBalances[paidBy] !== undefined) {
-        memberBalances[paidBy] += amount;
+      // Handle multiple payers (object) or single payer (string)
+      if (typeof paidBy === 'object' && paidBy !== null) {
+        Object.keys(paidBy).forEach(mId => {
+          if (memberBalances[mId] !== undefined) {
+            memberBalances[mId] += Number(paidBy[mId]);
+          }
+        });
+      } else {
+        if (memberBalances[paidBy] !== undefined) {
+          memberBalances[paidBy] += amount;
+        }
       }
 
       // Subtract the portion each person owes

@@ -1,23 +1,28 @@
 import { collection, query, where, getDocs, addDoc, Timestamp, doc, updateDoc, arrayUnion, setDoc, onSnapshot, orderBy, deleteDoc, arrayRemove, writeBatch, getDoc } from 'firebase/firestore';
 import { db, storage } from './firebaseConfig';
 import { ref, deleteObject } from 'firebase/storage';
+import { calculateGroupMetrics } from '../utils/expenseUtils';
 
 export interface Group {
   id: string;
   name: string;
   members: string[];
+  currentCycleId?: string;
+  createdAt?: any;
 }
 
 export interface ExpenseData {
   amount?: number;
   description?: string;
-  type?: 'expense' | 'payment';
-  paidBy?: string;
+  type?: 'expense' | 'payment' | 'carryForward';
+  paidBy?: string | { [key: string]: number };
   paidTo?: string;
   groupId?: string;
+  cycleId?: string | null;
   splitDetails?: { [key: string]: number };
   receiptUrl?: string | null;
   date?: any;
+  isRecurring?: boolean;
 }
 
 export const getGroups = async (userId: string) => {
@@ -27,11 +32,25 @@ export const getGroups = async (userId: string) => {
 };
 
 export const createGroup = async (name: string, members: string[]) => {
+  const cycleRef = doc(collection(db, 'cycles'));
+  const cycleId = cycleRef.id;
+  
   const docRef = await addDoc(collection(db, 'groups'), {
     name,
     members,
+    currentCycleId: cycleId,
     createdAt: Timestamp.now(),
   });
+  
+  // Create initial cycle
+  await setDoc(cycleRef, {
+    id: cycleId,
+    groupId: docRef.id,
+    status: 'OPEN',
+    startTime: Timestamp.now(),
+    name: 'Initial Month'
+  });
+
   return docRef.id;
 };
 
@@ -49,7 +68,7 @@ export const addMemberToGroup = async (groupId: string, userId: string) => {
   });
 };
 
-export const addPayment = async (senderId: string, receiverId: string, amount: number, groupId: string, senderName: string, receiverName: string) => {
+export const addPayment = async (senderId: string, receiverId: string, amount: number, groupId: string, cycleId: string, senderName: string, receiverName: string) => {
   const docRef = await addDoc(collection(db, 'expenses'), {
     amount,
     paidBy: senderId,
@@ -57,6 +76,7 @@ export const addPayment = async (senderId: string, receiverId: string, amount: n
     paidByName: senderName,
     paidToName: receiverName,
     groupId,
+    cycleId,
     type: 'payment',
     description: 'Settle Up Payment',
     date: Timestamp.now(),
@@ -102,6 +122,84 @@ export const updateExpense = async (expenseId: string, expenseData: Partial<Expe
     ...expenseData,
     updatedAt: Timestamp.now(),
   });
+};
+
+export const closeCurrentCycle = async (groupId: string, members: any[], expenses: any[], cycleName: string) => {
+  const groupRef = doc(db, 'groups', groupId);
+  const groupSnap = await getDoc(groupRef);
+  if (!groupSnap.exists()) throw new Error("Group does not exist");
+  const gData = groupSnap.data() as Group;
+  const currentCycleId = gData.currentCycleId;
+
+  // 1. Calculate balances for the current cycle
+  const balances = calculateGroupMetrics(expenses, members);
+
+  const batch = writeBatch(db);
+
+  // 2. Mark current cycle as closed
+  if (currentCycleId) {
+    batch.update(doc(db, 'cycles', currentCycleId), {
+      status: 'CLOSED',
+      endTime: Timestamp.now(),
+      finalBalances: balances
+    });
+  }
+
+  // 3. Create NEW cycle
+  const newCycleRef = doc(collection(db, 'cycles'));
+  const newCycleId = newCycleRef.id;
+  batch.set(newCycleRef, {
+    id: newCycleId,
+    groupId,
+    status: 'OPEN',
+    startTime: Timestamp.now(),
+    name: cycleName,
+    previousCycleId: currentCycleId || null
+  });
+
+  // 4. Update Group with new cycle ID
+  batch.update(groupRef, { currentCycleId: newCycleId });
+
+  // 5. Carry Forward non-zero balances
+  Object.entries(balances).forEach(([mId, bal]) => {
+    if (Math.abs(bal) > 0.1) {
+      const isOwed = bal > 0;
+      const amount = Math.abs(bal);
+      const member = members.find(m => m.id === mId);
+      const memberName = member?.displayName || 'User';
+      
+      const carryForwardRef = doc(collection(db, 'expenses'));
+      batch.set(carryForwardRef, {
+        amount,
+        description: `Carry Forward: ${memberName}'s ${isOwed ? 'Credit' : 'Due'}`,
+        groupId,
+        cycleId: newCycleId,
+        type: 'carryForward',
+        paidBy: isOwed ? mId : 'system',
+        date: Timestamp.now(),
+        createdAt: Timestamp.now(),
+        splitDetails: {
+           [mId]: isOwed ? 0 : amount
+        }
+      });
+    }
+  });
+
+  // 6. Handle Recurring Expenses (Auto-add to new cycle as fresh items)
+  const recurringExpenses = expenses.filter(e => e.isRecurring && e.type !== 'carryForward');
+  for (const re of recurringExpenses) {
+    const reRef = doc(collection(db, 'expenses'));
+    batch.set(reRef, {
+      ...re,
+      cycleId: newCycleId,
+      date: Timestamp.now(),
+      createdAt: Timestamp.now(),
+      id: reRef.id // Ensure unique ID for new record
+    });
+  }
+
+  await batch.commit();
+  return newCycleId;
 };
 
 export const deleteExpense = async (expenseId: string) => {
@@ -253,25 +351,32 @@ export const subscribeToUserExpenses = (userId: string, onUpdate: (data: { expen
       let totalOwe = 0;
 
       allExpenses.forEach((e: ExpenseData & { id: string }) => {
-        const isPaidByMe = e.paidBy === userId;
+        const paidBy = e.paidBy;
         const amount = Number(e.amount);
+        
+        // Calculate what I paid
+        let myContribution = 0;
+        if (typeof paidBy === 'object' && paidBy !== null) {
+          myContribution = Number(paidBy[userId] || 0);
+        } else if (paidBy === userId) {
+          myContribution = amount;
+        }
 
         if (e.type === 'payment') {
-            if (isPaidByMe) {
-              totalOwed += amount; // I paid someone, so relative to debts, I'm more "owed" or less "owe"
+            if (paidBy === userId) {
+              totalOwed += amount;
             } else if (e.paidTo === userId) {
-              totalOwe += amount; // Someone paid me
+              totalOwe += amount;
             }
         } else {
             const splitDetails = e.splitDetails || {};
-            if (isPaidByMe) {
-              Object.keys(splitDetails).forEach(mId => {
-                if (mId !== userId) {
-                  totalOwed += (Number(splitDetails[mId]) || 0);
-                }
-              });
-            } else if (splitDetails[userId] !== undefined) {
-              totalOwe += (Number(splitDetails[userId]) || 0);
+            const myShare = Number(splitDetails[userId] || 0);
+            
+            const diff = myContribution - myShare;
+            if (diff > 0) {
+              totalOwed += diff;
+            } else if (diff < 0) {
+              totalOwe += Math.abs(diff);
             }
         }
       });
@@ -297,4 +402,27 @@ export const subscribeToUserExpenses = (userId: string, onUpdate: (data: { expen
   };
 };
 
+export const getGroupCycles = async (groupId: string) => {
+  const q = query(collection(db, 'cycles'), where('groupId', '==', groupId), orderBy('startTime', 'desc'));
+  const snap = await getDocs(q);
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+};
 
+export const reopenCycle = async (groupId: string, cycleId: string) => {
+  const batch = writeBatch(db);
+  const groupRef = doc(db, 'groups', groupId);
+  const cycleRef = doc(db, 'cycles', cycleId);
+
+  // 1. Mark cycle as OPEN
+  batch.update(cycleRef, { status: 'OPEN', endTime: null });
+
+  // 2. Update group's currentCycleId
+  batch.update(groupRef, { currentCycleId: cycleId });
+
+  // 3. Remove carryForward expenses created when this cycle started (optional but cleaner)
+  const carryQ = query(collection(db, 'expenses'), where('groupId', '==', groupId), where('cycleId', '==', cycleId), where('type', '==', 'carryForward'));
+  const carrySnap = await getDocs(carryQ);
+  carrySnap.docs.forEach(d => batch.delete(d.ref));
+
+  await batch.commit();
+};

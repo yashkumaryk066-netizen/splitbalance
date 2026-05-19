@@ -2,23 +2,42 @@ import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { Platform } from 'react-native';
 
-export const generateGroupReport = async (groupName: string, members: any[], expenses: any[]) => {
+export const generateGroupReport = async (groupName: string, members: any[], expenses: any[], currency: string = '₹') => {
   // Calculate aggregate balances
   const balances: { [key: string]: number } = {};
   members.forEach(m => balances[m.id] = 0);
 
-  expenses.forEach(e => {
-    const paidBy = e.paidBy;
-    const amount = Number(e.amount);
-    const splits = e.splitDetails || {};
+  const carryForwardItems = expenses.filter(e => e.type === 'carryForward');
+  const settlementItems = expenses.filter(e => e.type === 'payment' || e.type === 'settlement');
+  const regularExpenses = expenses.filter(e => e.type !== 'carryForward' && e.type !== 'payment' && e.type !== 'settlement');
 
-    if (balances[paidBy] !== undefined) balances[paidBy] += amount;
-    Object.keys(splits).forEach(mId => {
-      if (balances[mId] !== undefined) balances[mId] -= Number(splits[mId]);
-    });
+  const totalNewSpend = regularExpenses.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
+  const totalSettlements = settlementItems.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
+
+  expenses.forEach(e => {
+    const amount = Number(e.amount);
+    if (e.type === 'payment' || e.type === 'settlement') {
+        const from = e.paidBy;
+        const to = e.paidTo;
+        if (balances[from] !== undefined) balances[from] += amount;
+        if (balances[to] !== undefined) balances[to] -= amount;
+    } else {
+        const paidBy = e.paidBy;
+        const splits = e.splitDetails || {};
+        if (typeof paidBy === 'object' && paidBy !== null) {
+            Object.keys(paidBy).forEach(mId => {
+              if (balances[mId] !== undefined) balances[mId] += Number(paidBy[mId]);
+            });
+        } else {
+            if (balances[paidBy] !== undefined) balances[paidBy] += amount;
+        }
+        Object.keys(splits).forEach(mId => {
+            if (balances[mId] !== undefined) balances[mId] -= Number(splits[mId]);
+        });
+    }
   });
 
-  // Calculate settlement summary
+  // Calculate settlement summary (Min-Flow)
   const debts: { from: string, to: string, amount: number, vpa?: string }[] = [];
   const sortedBalances = Object.entries(balances)
     .map(([id, balance]) => ({ id, balance }))
@@ -78,7 +97,10 @@ export const generateGroupReport = async (groupName: string, members: any[], exp
           .description-meta { font-size: 12px; color: #64748b; }
           
           .amount-cell { text-align: right; font-weight: 800; color: #1e293b; font-size: 16px; }
-          .member-tag { display: inline-block; padding: 3px 8px; background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 10px; color: #64748b; margin-right: 4px; margin-top: 4px; }
+          .tag { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 9px; font-weight: 800; text-transform: uppercase; margin-top: 4px; }
+          .tag-carry { background: #fee2e2; color: #991b1b; }
+          .tag-new { background: #dcfce7; color: #166534; }
+          .tag-pay { background: #e0e7ff; color: #3730a3; }
           
           .footer { margin-top: 80px; padding-top: 30px; border-top: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: start; }
           .footer-logo { font-weight: 800; color: #4f46e5; font-size: 18px; }
@@ -89,7 +111,7 @@ export const generateGroupReport = async (groupName: string, members: any[], exp
         <div class="container">
           <div class="header">
             <div class="header-left">
-              <p>GROUP LEDGER</p>
+              <p>CYCLE LEDGER REPORT</p>
               <h1>${groupName}</h1>
             </div>
             <div class="header-right">
@@ -101,28 +123,28 @@ export const generateGroupReport = async (groupName: string, members: any[], exp
           <div class="summary-grid">
             <div class="card">
               <div class="card-accent" style="background: #4f46e5;"></div>
-              <div class="card-label">Total Spend</div>
-              <div class="card-value">₹${expenses.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0).toLocaleString('en-IN')}</div>
+              <div class="card-label">Monthly New Spend</div>
+              <div class="card-value">${currency}${totalNewSpend.toLocaleString('en-IN')}</div>
             </div>
             <div class="card">
               <div class="card-accent" style="background: #10b981;"></div>
-              <div class="card-label">Active Members</div>
-              <div class="card-value">${members.length} Users</div>
+              <div class="card-label">Settled Dues</div>
+              <div class="card-value">${currency}${totalSettlements.toLocaleString('en-IN')}</div>
             </div>
             <div class="card">
               <div class="card-accent" style="background: #f59e0b;"></div>
-              <div class="card-label">Total Transactions</div>
-              <div class="card-value">${expenses.length} Entries</div>
+              <div class="card-label">Carry Forward</div>
+              <div class="card-value">${carryForwardItems.length} Dues</div>
             </div>
           </div>
  
-          <div class="section-title">Settlement Guide</div>
+          <div class="section-title">Settlement Guide (Final Balances)</div>
           <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px; margin-bottom: 25px;">
             ${members.map(m => `
               <div class="card" style="padding: 16px;">
                 <div style="font-size: 13px; font-weight: 700; color: #475569; margin-bottom: 4px;">${m.displayName}</div>
                 <div style="font-size: 18px; font-weight: 800; color: ${balances[m.id] >= 0 ? '#10b981' : '#ef4444'}">
-                  ₹${Math.abs(balances[m.id]).toFixed(0)}
+                  ${currency}${Math.abs(balances[m.id]).toFixed(0)}
                   <span style="font-size: 10px; font-weight: 600; opacity: 0.7;">${balances[m.id] >= 0 ? 'RECIEVABLE' : 'PAYABLE'}</span>
                 </div>
               </div>
@@ -139,55 +161,57 @@ export const generateGroupReport = async (groupName: string, members: any[], exp
                     <span style="color: #64748b; margin: 0 10px;">→</span>
                     <span style="font-weight: 700;">${d.to}</span>
                   </div>
-                  <div class="settlement-badge">₹${d.amount.toFixed(0)}</div>
+                  <div class="settlement-badge">${currency}${d.amount.toFixed(0)}</div>
                 </div>
               `).join('')}
               <p style="font-size: 11px; color: #3b82f6; margin-bottom: 0;">* These transfers minimize the number of payments required to settle all debts.</p>
             </div>
           ` : '<p style="color: #64748b; background: #f8fafc; padding: 20px; border-radius: 12px; text-align: center;"><b>Perfectly Balanced:</b> All accounts are settled!</p>'}
  
-          <div class="section-title">Audit Log</div>
+          <div class="section-title">Cycle Audit Log</div>
           <table>
             <thead>
               <tr>
                 <th style="width: 50%;">PAYMENT DETAIL</th>
-                <th style="width: 25%;">PAID BY</th>
+                <th style="width: 25%;">PAID BY / TO</th>
                 <th style="width: 25%; text-align: right;">AMOUNT</th>
               </tr>
             </thead>
             <tbody>
               ${expenses.map(exp => {
                 const payer = members.find(m => m.id === exp.paidBy);
-                const dateStr = new Date(exp.date.toDate ? exp.date.toDate() : exp.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
+                const receiver = members.find(m => m.id === exp.paidTo);
+                const isCarry = exp.type === 'carryForward';
+                const isPay = exp.type === 'payment' || exp.type === 'settlement';
+                const dateStr = new Date(exp.date?.toDate ? exp.date.toDate() : exp.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
+                
                 return `
                 <tr>
                   <td>
                     <div class="description-cell">
                       <span class="description-title">${exp.description}</span>
-                      <span class="description-meta">${dateStr} • Split: ${exp.splitType || 'Equal'}</span>
-                      <div style="display: flex; flex-wrap: wrap;">
-                        ${Object.entries(exp.splitDetails || {}).map(([mId, amt]) => {
-                          const m = members.find(member => member.id === mId);
-                          if (!m || Number(amt) <= 0) return '';
-                          return `<span class="member-tag"><b>${m.displayName}:</b> ₹${Number(amt).toFixed(0)}</span>`;
-                        }).join('')}
+                      <span class="description-meta">${dateStr}</span>
+                      <div>
+                        <span class="tag ${isCarry ? 'tag-carry' : isPay ? 'tag-pay' : 'tag-new'}">
+                          ${isCarry ? 'Pichla Due' : isPay ? 'Settle Payment' : 'New Expense'}
+                        </span>
                       </div>
                     </div>
                   </td>
                   <td>
-                    <div style="font-weight: 700;">${payer?.displayName || 'Ex-User'}</div>
-                    <div style="font-size: 10px; color: #94a3b8;">${payer?.email || ''}</div>
+                    <div style="font-weight: 700;">${payer?.displayName || 'System'}</div>
+                    ${receiver ? `<div style="font-size: 10px; color: #4f46e5;">→ ${receiver.displayName}</div>` : ''}
                   </td>
-                  <td class="amount-cell">₹${Number(exp.amount).toLocaleString('en-IN')}</td>
+                  <td class="amount-cell">${currency}${Number(exp.amount).toLocaleString('en-IN')}</td>
                 </tr>
               `}).join('')}
             </tbody>
           </table>
  
           <div class="footer">
-            <div class="footer-logo">SplitBalance</div>
+            <div class="footer-logo">SettleStack (SplitBalance)</div>
             <div class="footer-text">
-              Confidential report generated securely. Calculations follow the Max-Flow Settlement Engine logic.
+              Confidential report generated securely. Pichla due balances are auto-imported from the previous cycle.
               Stay balanced, stay connected.
             </div>
           </div>
@@ -196,10 +220,10 @@ export const generateGroupReport = async (groupName: string, members: any[], exp
     </html>
   `;
 
-  await renderPdf(html, `${groupName}_Ledger`);
+  await renderPdf(html, `${groupName}_Report`);
 };
 
-export const generatePersonalMonthlyReport = async (userName: string, month: string, expenses: any[]) => {
+export const generatePersonalMonthlyReport = async (userName: string, month: string, expenses: any[], currency: string = '₹') => {
     const totalSpent = expenses.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
     const categorySummary: { [key: string]: number } = {};
     expenses.forEach(e => {
@@ -250,11 +274,11 @@ export const generatePersonalMonthlyReport = async (userName: string, month: str
           <div class="stats-hero">
             <div class="stat-main">
               <p>Total Monthly Expenditure</p>
-              <h2>₹${totalSpent.toLocaleString('en-IN')}</h2>
+              <h2>${currency}${totalSpent.toLocaleString('en-IN')}</h2>
             </div>
             <div style="font-size: 14px; text-align: right; opacity: 0.9;">
               ${expenses.length} Shared Transactions<br/>
-              Average ₹${(totalSpent / (expenses.length || 1)).toFixed(0)} / expense
+              Average ${currency}${(totalSpent / (expenses.length || 1)).toFixed(0)} / expense
             </div>
           </div>
 
@@ -263,7 +287,7 @@ export const generatePersonalMonthlyReport = async (userName: string, month: str
             ${Object.entries(categorySummary).map(([cat, val]) => `
               <div class="cat-card">
                 <span class="cat-name">${cat}</span>
-                <span class="cat-val">₹${val.toLocaleString('en-IN')}</span>
+                <span class="cat-val">${currency}${val.toLocaleString('en-IN')}</span>
               </div>
             `).join('')}
           </div>
@@ -284,7 +308,7 @@ export const generatePersonalMonthlyReport = async (userName: string, month: str
                   <td style="color: #64748b;">${new Date(e.date?.toDate ? e.date.toDate() : e.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}</td>
                   <td><div style="font-weight: 700;">${e.description}</div></td>
                   <td><span style="background: #e0e7ff; color: #4338ca; font-size: 10px; font-weight: 800; padding: 4px 10px; border-radius: 6px;">${(e.category || 'GENERAL').toUpperCase()}</span></td>
-                  <td class="amount-col">₹${(e.splitDetails?.[e.theUserId] || e.amount || 0).toLocaleString('en-IN')}</td>
+                  <td class="amount-col">${currency}${(e.splitDetails?.[e.theUserId] || e.amount || 0).toLocaleString('en-IN')}</td>
                 </tr>
               `).join('')}
             </tbody>

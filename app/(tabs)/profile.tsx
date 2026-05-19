@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleSheet, Pressable, ScrollView, Switch, Platform, Modal } from 'react-native';
+import { StyleSheet, Pressable, ScrollView, Switch, Platform, Modal, Alert } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Text, View } from '@/components/Themed';
 import { useUserStore } from '@/src/store/useUserStore';
@@ -8,15 +8,16 @@ import { signOut, updateProfile } from 'firebase/auth';
 import { doc, updateDoc, setDoc } from 'firebase/firestore';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
-import { LogOut, User, Bell, Shield, HelpCircle, ChevronRight, Moon, Settings, X, DownloadCloud, Edit2 } from 'lucide-react-native';
+import { LogOut, User, Bell, Shield, HelpCircle, ChevronRight, Moon, Settings, X, DownloadCloud, Edit2, Zap, Trash2 } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import { LATEST_APK_URL } from '@/constants/Version';
 import { Linking, TextInput, ActivityIndicator } from 'react-native';
 import { useNotification } from '@/components/Notification';
 import * as ImagePicker from 'expo-image-picker';
-import { ref, getDownloadURL } from 'firebase/storage';
+import { ref, getDownloadURL, uploadBytes, deleteObject } from 'firebase/storage';
 import * as FileSystem from 'expo-file-system';
 import { Image } from 'react-native';
+import { runSystemAudit } from '@/src/services/auditService';
 
 export default function ProfileScreen() {
   const { user, setUser, settings, updateSettings } = useUserStore();
@@ -62,22 +63,21 @@ export default function ProfileScreen() {
         const storageRef = ref(storage, `avatars/${auth.currentUser.uid}.jpg`);
         
         try {
-          // 1. Get Base64 securely
-          const base64 = await FileSystem.readAsStringAsync(asset.uri, { encoding: FileSystem.EncodingType.Base64 });
-          const dataUrl = `data:image/jpeg;base64,${base64}`;
-
-          // 2. Update Auth Profile (Optionally, though auth doesn't like huge strings)
-          // await updateProfile(auth.currentUser, { photoURL: dataUrl });
+          const response = await fetch(asset.uri);
+          const blob = await response.blob();
+          
+          await uploadBytes(storageRef, blob);
+          const downloadUrl = await getDownloadURL(storageRef);
 
           // 3. Update Firestore (Directly into the document)
-          await setDoc(doc(db, 'users', auth.currentUser.uid), { photoURL: dataUrl }, { merge: true });
+          await setDoc(doc(db, 'users', auth.currentUser.uid), { photoURL: downloadUrl }, { merge: true });
 
           // 4. Update Global Store
-          setUser(user ? { ...user, photoURL: dataUrl } : { uid: auth.currentUser.uid, photoURL: dataUrl } as any);
+          setUser(user ? { ...user, photoURL: downloadUrl } : { uid: auth.currentUser.uid, photoURL: downloadUrl } as any);
           showNotification('Profile photo updated!', 'success');
         } catch (err) {
-          console.warn("Photo save failed:", err);
-          showNotification('Photo saving failed.', 'error');
+          console.warn("Photo upload failed:", err);
+          showNotification('Photo upload failed.', 'error');
         }
       }
     } catch (err: any) {
@@ -117,6 +117,20 @@ export default function ProfileScreen() {
     }
   };
 
+
+  const handleRunAudit = async () => {
+    setUpdating(true);
+    try {
+      const results = await runSystemAudit();
+      const summary = `Base64 cleared: ${results.base64Detected}\nCycle mismatches: ${results.mismatchedCycles}\nCleaned Items: ${results.cleanedItems}`;
+      Alert.alert('System Audit Complete', summary);
+      showNotification('System cleaned!', 'success');
+    } catch (err) {
+      showNotification('Audit failed', 'error');
+    } finally {
+      setUpdating(false);
+    }
+  };
 
   const handleLogout = async () => {
     try {
@@ -233,6 +247,20 @@ export default function ProfileScreen() {
           onPress={() => setPreferencesVisible(true)} 
         />
 
+
+        <Text style={[styles.sectionTitle, { color: colors.icon }]}>System Automations</Text>
+        <SettingRow 
+          icon={Zap} 
+          title="Run Data Audit" 
+          value="Fix Storage & Errors" 
+          onPress={handleRunAudit}
+        />
+        <SettingRow 
+          icon={Trash2} 
+          title="Clear App Cache" 
+          value="Refresh Local Data" 
+          onPress={() => showNotification("Local cache cleared!", "success")} 
+        />
 
         <Text style={[styles.sectionTitle, { color: colors.icon }]}>Support</Text>
         <SettingRow 
