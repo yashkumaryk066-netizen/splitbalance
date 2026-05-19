@@ -17,7 +17,7 @@ const updateVersion = async () => {
     try {
         await setDoc(doc(db, 'app_config', 'version'), {
             latestVersion: '1.3.3',
-            downloadUrl: 'https://splitbalance-b552b.web.app/settlestack.apk',
+            downloadUrl: 'https://github.com/yashkumaryk066-netizen/splitbalance/releases/download/v1.3.3/SettleStack_v1.3.3.apk',
             mandatory: false,
             message: 'Stable update 1.3.3! Split your balances with the best experience yet. 🚀🔥'
         });
