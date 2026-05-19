@@ -9,13 +9,16 @@ if [ -z "$URL" ]; then
 fi
 
 echo "Got APK URL: $URL"
-echo "Downloading APK locally..."
-curl -L -o SettleStack.apk "$URL"
+echo "Downloading APK locally and as public zip asset..."
+curl -L -o public/settlestack.zip "$URL"
 
 if [ $? -ne 0 ]; then
   echo "Downloading APK failed!"
   exit 1
 fi
+
+# Keep a local copy for GitHub release
+cp public/settlestack.zip SettleStack.apk
 
 VERSION=$(node -p "require('./app.json').expo.version")
 echo "Creating GitHub Release for v$VERSION..."
@@ -30,7 +33,7 @@ echo "Updating version configuration files..."
 node -e "
 const fs = require('fs');
 const v = require('./app.json').expo.version;
-const url = \`https://github.com/yashkumaryk066-netizen/splitbalance/releases/download/v\${v}/SettleStack.apk\`;
+const url = 'https://splitbalance-b552b.web.app/download.html';
 
 // Update Version.ts
 let vContent = fs.readFileSync('src/constants/Version.ts', 'utf-8');
@@ -45,8 +48,9 @@ uContent = uContent.replace(/downloadUrl: '.*',/, \`downloadUrl: '\${url}',\`);
 fs.writeFileSync('update_version_standalone.ts', uContent);
 "
 
-# Clean up local APK
+# Clean up local temp APK
 rm SettleStack.apk
+
 
 echo "Building Web App..."
 npm run build
