@@ -62,6 +62,35 @@ export default function AddExpenseModal() {
   const colors = Colors[colorScheme];
   const insets = useSafeAreaInsets();
 
+  const isValid = useMemo(() => {
+    if (!amount || !description) return false;
+    const total = evaluateAmountString(amount);
+    if (isNaN(total) || total <= 0) return false;
+
+    if (groupId && groupMembers.length > 0) {
+      if (multiPayerMode) {
+        const sumPayers = Object.values(payerDetails).reduce((a, b) => a + (b || 0), 0);
+        if (Math.abs(sumPayers - total) > 0.1) return false;
+      }
+
+      if (splitType === 'Equal') {
+        const activeMembers = groupMembers.filter(m => splitDetails[m.id] === undefined || splitDetails[m.id] > 0);
+        if (activeMembers.length === 0) return false;
+      } else if (splitType === 'Exact') {
+        const sum = Object.values(splitDetails).reduce((a, b) => a + (b || 0), 0);
+        if (Math.abs(sum - total) > 0.1) return false;
+      } else if (splitType === 'Percentage') {
+        const sum = Object.values(splitDetails).reduce((a, b) => a + (b || 0), 0);
+        if (Math.abs(sum - 100) > 0.1) return false;
+      } else if (splitType === 'Shares') {
+        const totalShares = Object.values(splitDetails).reduce((a, b) => a + (b || 0), 0);
+        if (totalShares <= 0) return false;
+      }
+    }
+    return true;
+  }, [amount, description, groupId, groupMembers, splitType, splitDetails, multiPayerMode, payerDetails]);
+
+
   useEffect(() => {
     if (user) {
       loadGroups();
@@ -410,9 +439,13 @@ export default function AddExpenseModal() {
           <X size={24} color={colors.text} />
         </Pressable>
         <Text style={styles.headerTitle}>{expenseId ? 'Edit Expense' : 'Add Expense'}</Text>
-        <Pressable onPress={expenseId ? handleUpdate : handleSave} disabled={loading} style={styles.doneButton}>
-          {loading ? <ActivityIndicator size="small" color={colors.primary} /> : <Text style={[styles.doneText, { color: colors.primary }]}>Done</Text>}
-        </Pressable>
+        {isValid ? (
+          <Pressable onPress={expenseId ? handleUpdate : handleSave} disabled={loading} style={styles.doneButton}>
+            {loading ? <ActivityIndicator size="small" color={colors.primary} /> : <Text style={[styles.doneText, { color: colors.primary }]}>Done</Text>}
+          </Pressable>
+        ) : (
+          <View style={{ width: 40 }} />
+        )}
       </View>
 
       <ScrollView contentContainerStyle={styles.form}>
@@ -623,11 +656,17 @@ export default function AddExpenseModal() {
                     </View>
                   ))}
                   <View style={{ marginTop: 10, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 10 }}>
-                    <Text style={{ color: colors.icon, fontSize: 12 }}>
-                      Total Contributions: {settings.currency}{Object.values(payerDetails).reduce((a, b) => a + b, 0).toFixed(2)}
-                      {Math.abs(Object.values(payerDetails).reduce((a, b) => a + b, 0) - parseFloat(amount)) > 0.1 && 
-                        ` (Target: ${settings.currency}${amount})`}
-                    </Text>
+                    {(() => {
+                      const totalContributions = Object.values(payerDetails).reduce((a, b) => a + (b || 0), 0);
+                      const target = evaluateAmountString(amount) || 0;
+                      const diff = target - totalContributions;
+                      return (
+                        <Text style={{ color: Math.abs(diff) > 0.1 ? colors.debt : colors.gain, fontSize: 13, fontWeight: '600' }}>
+                          Contributions: {settings.currency}{totalContributions.toFixed(2)} 
+                          {Math.abs(diff) > 0.1 ? ` (${diff > 0 ? 'Short' : 'Over'} by ${settings.currency}${Math.abs(diff).toFixed(2)})` : ' ✓ Perfect'}
+                        </Text>
+                      );
+                    })()}
                   </View>
                 </View>
               )}
@@ -655,9 +694,21 @@ export default function AddExpenseModal() {
               </ScrollView>
               
               <View style={{ marginTop: 20, backgroundColor: 'transparent' }}>
-                <Text style={[styles.label, { fontSize: 14, color: colors.icon, marginBottom: 12 }]}>
-                  {splitType === 'Equal' ? 'Who is included?' : `Specify ${splitType === 'Exact' ? 'Amounts' : splitType === 'Percentage' ? 'Percentages' : 'Shares'}:`}
-                </Text>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                  <Text style={[styles.label, { fontSize: 14, color: colors.icon, marginBottom: 0 }]}>
+                    {splitType === 'Equal' ? 'Who is included?' : `Specify ${splitType === 'Exact' ? 'Amounts' : splitType === 'Percentage' ? 'Percentages' : 'Shares'}:`}
+                  </Text>
+                  {splitType !== 'Equal' && splitType !== 'Shares' && (() => {
+                    const sum = Object.values(splitDetails).reduce((a, b) => a + (b || 0), 0);
+                    const target = splitType === 'Exact' ? (evaluateAmountString(amount) || 0) : 100;
+                    const diff = target - sum;
+                    return (
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: Math.abs(diff) > 0.1 ? colors.debt : colors.gain }}>
+                        {splitType === 'Exact' ? 'Left: ' + settings.currency + diff.toFixed(2) : 'Left: ' + diff.toFixed(1) + '%'}
+                      </Text>
+                    );
+                  })()}
+                </View>
                 {groupMembers.map((member) => (
                   <View key={member.id} style={[styles.splitMemberRow, { borderBottomColor: colors.border }]}>
                     <Text style={{ color: colors.text, flex: 1, fontWeight: '500' }}>{member.displayName}</Text>

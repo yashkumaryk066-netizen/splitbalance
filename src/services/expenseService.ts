@@ -93,10 +93,27 @@ export const removeMemberFromGroup = async (groupId: string, userId: string) => 
 };
 
 export const deleteGroup = async (groupId: string) => {
-  const batch = writeBatch(db);
+  let batch = writeBatch(db);
+  let batchCount = 0;
+
+  const commitBatch = async () => {
+    if (batchCount > 0) {
+      await batch.commit();
+      batch = writeBatch(db);
+      batchCount = 0;
+    }
+  };
+
+  const addDeleteToBatch = async (ref: any) => {
+    batch.delete(ref);
+    batchCount++;
+    if (batchCount === 400) {
+      await commitBatch();
+    }
+  };
   
   // 1. Delete group document
-  batch.delete(doc(db, 'groups', groupId));
+  await addDeleteToBatch(doc(db, 'groups', groupId));
   
   // 2. Delete all expenses in this group & their photos
   const q = query(collection(db, 'expenses'), where('groupId', '==', groupId));
@@ -110,10 +127,17 @@ export const deleteGroup = async (groupId: string) => {
             await deleteObject(photoRef);
         } catch (err) { /* silent fail if already gone */ }
     }
-    batch.delete(doc(db, 'expenses', d.id));
+    await addDeleteToBatch(doc(db, 'expenses', d.id));
+  }
+
+  // 3. Delete all cycles for this group
+  const cyclesQ = query(collection(db, 'cycles'), where('groupId', '==', groupId));
+  const cyclesSnap = await getDocs(cyclesQ);
+  for (const c of cyclesSnap.docs) {
+    await addDeleteToBatch(doc(db, 'cycles', c.id));
   }
   
-  await batch.commit();
+  await commitBatch();
 };
 
 export const updateExpense = async (expenseId: string, expenseData: Partial<ExpenseData>) => {

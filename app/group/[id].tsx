@@ -468,20 +468,35 @@ export default function GroupDetailScreen() {
                 { text: 'Download Month Report', onPress: handleDownloadReport },
                 { text: 'Invite Member', onPress: handleInvite },
                 { text: 'Leave Group', style: 'destructive' as const, onPress: () => {
+                  const metrics = calculateGroupMetrics(expenses, members);
+                  const myNet = metrics[user?.uid || ''] || 0;
+                  if (Math.abs(myNet) > 0.1) {
+                    Alert.alert('Cannot Leave', 'Please settle your balances (you owe or are owed money) before leaving the group.');
+                    return;
+                  }
                   Alert.alert('Leave Group', 'Are you sure you want to leave this group?', [
                     { text: 'Cancel', style: 'cancel' },
                     { text: 'Leave', style: 'destructive', onPress: async () => {
-                       await removeMemberFromGroup(id as string, user!.uid);
-                       router.replace('/(tabs)/groups');
+                       try {
+                         await removeMemberFromGroup(id as string, user!.uid);
+                         router.replace('/(tabs)/groups');
+                       } catch (e) {
+                         showNotification('Failed to leave group', 'error');
+                       }
                     }}
                   ]);
                 }},
                 { text: 'Delete Group', style: 'destructive' as const, onPress: () => {
-                  Alert.alert('Delete Group', 'This will erase ALL data. Continue?', [
+                  Alert.alert('Delete Group', 'This will erase ALL data, expenses, and cycles. Continue?', [
                     { text: 'Cancel', style: 'cancel' },
                     { text: 'Delete', style: 'destructive', onPress: async () => {
-                      await deleteGroup(id as string);
-                      router.replace('/(tabs)/groups');
+                      try {
+                        await deleteGroup(id as string);
+                        showNotification('Group deleted', 'success');
+                        router.replace('/(tabs)/groups');
+                      } catch (e) {
+                        showNotification('Failed to delete group (Maybe too many expenses, or permissions)', 'error');
+                      }
                     }}
                   ]);
                 }},
@@ -502,11 +517,19 @@ export default function GroupDetailScreen() {
           <View style={styles.totalItem}>
             <Text style={[styles.totalLabel, { color: colors.icon }]}>Group Total Spend</Text>
             <Text style={styles.totalValue}>{settings.currency}{expenses.reduce((acc, curr) => acc + (curr.amount || 0), 0).toFixed(0)}</Text>
-
           </View>
-          <Pressable onPress={handleSettleUpMain} style={[styles.settleButton, { backgroundColor: colors.primary }]}>
-            <Text style={styles.settleText}>Settle Up</Text>
-          </Pressable>
+          {(() => {
+            const metrics = calculateGroupMetrics(expenses, members);
+            const myNet = metrics[user?.uid || ''] || 0;
+            if (myNet < -0.1) {
+              return (
+                <Pressable onPress={handleSettleUpMain} style={[styles.settleButton, { backgroundColor: colors.primary }]}>
+                  <Text style={styles.settleText}>Settle Up</Text>
+                </Pressable>
+              );
+            }
+            return null;
+          })()}
         </View>
 
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, backgroundColor: 'transparent' }}>
@@ -541,13 +564,22 @@ export default function GroupDetailScreen() {
         </View>
 
         <View style={{ flexDirection: 'row', gap: 12, marginTop: 20, backgroundColor: 'transparent' }}>
-          <Pressable 
-            onPress={() => setSettleModalVisible(true)}
-            style={[styles.actionButton, { backgroundColor: colors.gain }]}
-          >
-            <TrendingUp size={18} color="#fff" />
-            <Text style={styles.actionButtonText}>Settle Up</Text>
-          </Pressable>
+          {(() => {
+            const metrics = calculateGroupMetrics(expenses, members);
+            const myNet = metrics[user?.uid || ''] || 0;
+            if (myNet < -0.1) {
+               return (
+                  <Pressable 
+                    onPress={() => setSettleModalVisible(true)}
+                    style={[styles.actionButton, { backgroundColor: colors.gain }]}
+                  >
+                    <TrendingUp size={18} color="#fff" />
+                    <Text style={styles.actionButtonText}>Settle Up</Text>
+                  </Pressable>
+               );
+            }
+            return null;
+          })()}
           <Pressable 
             onPress={handleInvite}
             style={[styles.actionButton, { backgroundColor: colors.primary }]}
