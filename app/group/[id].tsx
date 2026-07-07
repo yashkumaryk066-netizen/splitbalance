@@ -12,7 +12,7 @@ import { useUserStore } from '@/src/store/useUserStore';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { addDoc, collection, doc, getDoc, onSnapshot, orderBy, query, where, updateDoc, arrayUnion } from 'firebase/firestore';
 import { evaluateAmountString } from '@/src/utils/formatters';
-import { ArrowLeft, Contact, CreditCard, Download, Filter, MessageSquare, Plus, Receipt, Smartphone, TrendingUp, UserPlus, Wallet, X } from 'lucide-react-native';
+import { ArrowLeft, Contact, CreditCard, Download, Filter, MessageSquare, Plus, Receipt, Settings, Smartphone, TrendingUp, UserPlus, Wallet, X } from 'lucide-react-native';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Modal, Platform, Pressable, FlatList as RNFlatList, ScrollView, StyleSheet, TextInput, Share, Image } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -43,6 +43,7 @@ export default function GroupDetailScreen() {
   const [cycles, setCycles] = useState<any[]>([]);
   const [selectedCycleId, setSelectedCycleId] = useState<string | null>(null);
   const [showCyclePicker, setShowCyclePicker] = useState(false);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
   
   const { user, settings } = useUserStore();
 
@@ -505,50 +506,8 @@ export default function GroupDetailScreen() {
             <Pressable onPress={() => router.push(`/group/${id}/chat`)}>
               <MessageSquare color={colors.primary} size={24} style={{ marginRight: 16 }} />
             </Pressable>
-            <Pressable onPress={() => {
-              const options = [
-                { text: 'Cycle History', onPress: () => setShowCyclePicker(true) },
-                { text: 'Download Month Report', onPress: handleDownloadReport },
-                { text: 'Invite Member', onPress: handleInvite },
-                { text: 'Leave Group', style: 'destructive' as const, onPress: () => {
-                  const metrics = calculateGroupMetrics(expenses, members);
-                  const myNet = metrics[user?.uid || ''] || 0;
-                  if (Math.abs(myNet) > 0.1) {
-                    Alert.alert('Cannot Leave', 'Please settle your balances (you owe or are owed money) before leaving the group.');
-                    return;
-                  }
-                  Alert.alert('Leave Group', 'Are you sure you want to leave this group?', [
-                    { text: 'Cancel', style: 'cancel' },
-                    { text: 'Leave', style: 'destructive', onPress: async () => {
-                       try {
-                         await removeMemberFromGroup(id as string, user!.uid);
-                         router.replace('/(tabs)/groups');
-                       } catch (e) {
-                         showNotification('Failed to leave group', 'error');
-                       }
-                    }}
-                  ]);
-                }},
-                { text: 'Delete Group', style: 'destructive' as const, onPress: () => {
-                  Alert.alert('Delete Group', 'This will erase ALL data, expenses, and cycles. Continue?', [
-                    { text: 'Cancel', style: 'cancel' },
-                    { text: 'Delete', style: 'destructive', onPress: async () => {
-                      try {
-                        await deleteGroup(id as string);
-                        showNotification('Group deleted', 'success');
-                        router.replace('/(tabs)/groups');
-                      } catch (e) {
-                        showNotification('Failed to delete group (Maybe too many expenses, or permissions)', 'error');
-                      }
-                    }}
-                  ]);
-                }},
-                { text: 'Cancel', style: 'cancel' as const }
-              ];
-              
-              Alert.alert('Group Settings', 'Manage your group', options);
-            }}>
-              <Filter color={colors.icon} size={24} style={{ marginRight: 16 }} />
+            <Pressable onPress={() => setShowSettingsModal(true)}>
+              <Settings color={colors.icon} size={24} style={{ marginRight: 16 }} />
             </Pressable>
           </View>
         )
@@ -724,7 +683,7 @@ export default function GroupDetailScreen() {
                   return (
                     <Pressable 
                       key={m.id} 
-                      onLongPress={() => {
+                      onPress={() => {
                         if (isMe) return; // Can't remove yourself from here (maybe add "Leave Group" later)
                         Alert.alert(
                           'Manage Member',
@@ -1199,6 +1158,76 @@ export default function GroupDetailScreen() {
           </View>
         </View>
       </Modal>
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={showSettingsModal}
+        onRequestClose={() => setShowSettingsModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+           <Pressable style={StyleSheet.absoluteFill} onPress={() => setShowSettingsModal(false)} />
+           <View style={[styles.modalContent, { backgroundColor: colors.background, paddingBottom: Math.max(insets.bottom, 24), borderTopLeftRadius: 32, borderTopRightRadius: 32 }]}>
+              <View style={[styles.dragHandle, { backgroundColor: colors.border }]} />
+              <View style={styles.modalHeader}>
+                 <Text style={styles.modalTitle}>Group Settings</Text>
+                 <Pressable onPress={() => setShowSettingsModal(false)} style={{ padding: 8 }}>
+                    <X size={24} color={colors.text} />
+                 </Pressable>
+              </View>
+              <View style={{ gap: 12, backgroundColor: 'transparent' }}>
+                 <Pressable onPress={() => { setShowSettingsModal(false); setShowCyclePicker(true); }} style={{ paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: 'transparent' }}>
+                    <Text style={{ fontSize: 16, color: colors.text, fontWeight: '600' }}>Cycle History</Text>
+                 </Pressable>
+                 <Pressable onPress={() => { setShowSettingsModal(false); handleDownloadReport(); }} style={{ paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: 'transparent' }}>
+                    <Text style={{ fontSize: 16, color: colors.text, fontWeight: '600' }}>Download Month Report</Text>
+                 </Pressable>
+                 <Pressable onPress={() => { setShowSettingsModal(false); handleInvite(); }} style={{ paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: 'transparent' }}>
+                    <Text style={{ fontSize: 16, color: colors.text, fontWeight: '600' }}>Invite Member</Text>
+                 </Pressable>
+                 <Pressable onPress={() => {
+                    setShowSettingsModal(false);
+                    const metrics = calculateGroupMetrics(expenses, members);
+                    const myNet = metrics[user?.uid || ''] || 0;
+                    if (Math.abs(myNet) > 0.1) {
+                      Alert.alert('Cannot Leave', 'Please settle your balances (you owe or are owed money) before leaving the group.');
+                      return;
+                    }
+                    Alert.alert('Leave Group', 'Are you sure you want to leave this group?', [
+                      { text: 'Cancel', style: 'cancel' },
+                      { text: 'Leave', style: 'destructive', onPress: async () => {
+                         try {
+                           await removeMemberFromGroup(id as string, user!.uid);
+                           router.replace('/(tabs)/groups');
+                         } catch (e) {
+                           showNotification('Failed to leave group', 'error');
+                         }
+                      }}
+                    ]);
+                 }} style={{ paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: 'transparent' }}>
+                    <Text style={{ fontSize: 16, color: colors.debt, fontWeight: '600' }}>Leave Group</Text>
+                 </Pressable>
+                 <Pressable onPress={() => {
+                    setShowSettingsModal(false);
+                    Alert.alert('Delete Group', 'This will erase ALL data, expenses, and cycles. Continue?', [
+                      { text: 'Cancel', style: 'cancel' },
+                      { text: 'Delete', style: 'destructive', onPress: async () => {
+                        try {
+                          await deleteGroup(id as string);
+                          showNotification('Group deleted', 'success');
+                          router.replace('/(tabs)/groups');
+                        } catch (e) {
+                          showNotification('Failed to delete group (Maybe too many expenses, or permissions)', 'error');
+                        }
+                      }}
+                    ]);
+                 }} style={{ paddingVertical: 16, backgroundColor: 'transparent' }}>
+                    <Text style={{ fontSize: 16, color: colors.debt, fontWeight: '700' }}>Delete Group</Text>
+                 </Pressable>
+              </View>
+           </View>
+        </View>
+      </Modal>
+
     </View>
   );
 }
