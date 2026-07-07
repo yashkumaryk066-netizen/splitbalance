@@ -331,8 +331,18 @@ export default function GroupDetailScreen() {
       return;
     }
 
-    setSelectedPayee(members.filter(m => m.id !== user?.uid).sort((a,b) => (metrics[b.id]||0) - (metrics[a.id]||0))[0]);
-    setSettleAmount(Math.abs(myNet).toFixed(2));
+    const myDebts = calculateDebts().filter(d => d.from === user?.displayName || d.from === 'You');
+    
+    if (myDebts.length > 0) {
+      const highestDebt = myDebts.sort((a, b) => b.amount - a.amount)[0];
+      const payee = members.find(m => m.id === highestDebt.toId);
+      setSelectedPayee(payee);
+      setSettleAmount(highestDebt.amount.toFixed(2));
+    } else {
+      // Fallback if no direct optimized debt is found (rare)
+      setSelectedPayee(members.filter(m => m.id !== user?.uid).sort((a,b) => (metrics[b.id]||0) - (metrics[a.id]||0))[0]);
+      setSettleAmount(Math.abs(myNet).toFixed(2));
+    }
     setSettleModalVisible(true);
   };
 
@@ -853,24 +863,45 @@ export default function GroupDetailScreen() {
             <View style={styles.modalBody}>
               <Text style={[styles.listTitle, { color: colors.icon, marginBottom: 12 }]}>Who are you paying?</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 20 }}>
-                {members.filter(m => m.id !== user?.uid).map((m) => (
-                  <Pressable
-                    key={m.id}
-                    onPress={() => setSelectedPayee(m)}
-                    style={[
-                      styles.payeeChip,
-                      {
-                        backgroundColor: selectedPayee?.id === m.id ? colors.primary : colors.cardBg,
-                        borderColor: selectedPayee?.id === m.id ? colors.primary : colors.border,
-                      },
-                    ]}
-                  >
-                    <Text style={{ color: selectedPayee?.id === m.id ? '#fff' : colors.text, fontWeight: '600' }}>
-                      {m.displayName}
-                    </Text>
-                    {selectedPayee?.id === m.id && <X size={16} color="#fff" />}
-                  </Pressable>
-                ))}
+                {members.filter(m => m.id !== user?.uid).map((m) => {
+                  const debt = calculateDebts().find(d => (d.from === user?.displayName || d.from === 'You') && d.toId === m.id);
+                  const suggestion = debt ? debt.amount : 0;
+                  
+                  return (
+                    <Pressable
+                      key={m.id}
+                      onPress={() => {
+                        setSelectedPayee(m);
+                        if (suggestion > 0) {
+                          setSettleAmount(suggestion.toFixed(2));
+                        }
+                      }}
+                      style={[
+                        styles.payeeChip,
+                        {
+                          backgroundColor: selectedPayee?.id === m.id ? colors.primary : colors.cardBg,
+                          borderColor: selectedPayee?.id === m.id ? colors.primary : colors.border,
+                          flexDirection: 'column',
+                          alignItems: 'flex-start',
+                          paddingVertical: 10,
+                          paddingHorizontal: 16
+                        },
+                      ]}
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                        <Text style={{ color: selectedPayee?.id === m.id ? '#fff' : colors.text, fontWeight: '600' }}>
+                          {m.displayName}
+                        </Text>
+                        {selectedPayee?.id === m.id && <X size={14} color="#fff" />}
+                      </View>
+                      {suggestion > 0 && (
+                        <Text style={{ fontSize: 11, color: selectedPayee?.id === m.id ? '#ffffffCC' : colors.gain, marginTop: 4, fontWeight: '600' }}>
+                          Owe: {settings.currency}{suggestion.toFixed(2)}
+                        </Text>
+                      )}
+                    </Pressable>
+                  );
+                })}
               </ScrollView>
 
               <Text style={[styles.listTitle, { color: colors.icon, marginBottom: 12 }]}>Amount</Text>
