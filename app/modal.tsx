@@ -451,7 +451,13 @@ export default function AddExpenseModal() {
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <StatusBar style={Platform.OS === 'ios' ? 'light' : 'auto'} />
       <View style={[styles.header, { borderBottomColor: colors.border, paddingTop: Math.max(insets.top, 16) }]}>
-        <Pressable onPress={() => router.back()} style={styles.closeButton}>
+        <Pressable onPress={() => {
+          if (router.canGoBack()) {
+            router.back();
+          } else {
+            router.replace('/');
+          }
+        }} style={styles.closeButton}>
           <X size={24} color={colors.text} />
         </Pressable>
         <Text style={styles.headerTitle}>{expenseId ? 'Edit Expense' : 'Add Expense'}</Text>

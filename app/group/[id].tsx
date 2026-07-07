@@ -468,7 +468,13 @@ export default function GroupDetailScreen() {
         title: group?.name || 'Group', 
         headerShown: true,
         headerLeft: () => (
-          <Pressable onPress={() => router.back()} style={{ marginRight: 16 }}>
+          <Pressable onPress={() => {
+            if (router.canGoBack()) {
+              router.back();
+            } else {
+              router.replace('/(tabs)/groups');
+            }
+          }} style={{ marginRight: 16 }}>
             <ArrowLeft color={colors.text} size={24} />
           </Pressable>
         ),
