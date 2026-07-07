@@ -290,7 +290,7 @@ export default function GroupDetailScreen() {
               {statusText}
             </Text>
             <Text style={[styles.expenseStatusAmount, { color: statusColor, fontSize: 16 }]}>
-              {statusAmount > 0 ? `${settings.currency}${statusAmount.toFixed(0)}` : statusText === 'Not involved' ? '-' : `${settings.currency}0`}
+              {statusAmount > 0 ? `${settings.currency}${statusAmount.toFixed(2)}` : statusText === 'Not involved' ? '-' : `${settings.currency}0`}
             </Text>
           </View>
         </Pressable>
@@ -332,7 +332,7 @@ export default function GroupDetailScreen() {
     }
 
     setSelectedPayee(members.filter(m => m.id !== user?.uid).sort((a,b) => (metrics[b.id]||0) - (metrics[a.id]||0))[0]);
-    setSettleAmount(Math.abs(myNet).toFixed(0));
+    setSettleAmount(Math.abs(myNet).toFixed(2));
     setSettleModalVisible(true);
   };
 
@@ -516,7 +516,7 @@ export default function GroupDetailScreen() {
         <View style={styles.totalRow}>
           <View style={styles.totalItem}>
             <Text style={[styles.totalLabel, { color: colors.icon }]}>Group Total Spend</Text>
-            <Text style={styles.totalValue}>{settings.currency}{expenses.reduce((acc, curr) => acc + (curr.amount || 0), 0).toFixed(0)}</Text>
+            <Text style={styles.totalValue}>{settings.currency}{expenses.reduce((acc, curr) => acc + (curr.amount || 0), 0).toFixed(2)}</Text>
           </View>
           {(() => {
             const metrics = calculateGroupMetrics(expenses, members);
@@ -551,7 +551,7 @@ export default function GroupDetailScreen() {
               <View style={[styles.debtTile, { backgroundColor: colors.cardBg, borderColor: colors.border }]}>
                 {myNet >= 0 ? <TrendingUp size={16} color={colors.gain} /> : <TrendingUp size={16} color={colors.debt} style={{ transform: [{ rotate: '180deg'}] }} />}
                 <Text style={[styles.debtTileText, { color: myNet >= 0 ? colors.gain : colors.debt }]}>
-                  {myNet >= 0 ? `You are owed ${settings.currency}${myNet.toFixed(0)}` : `You owe ${settings.currency}${Math.abs(myNet).toFixed(0)}`}
+                  {myNet >= 0 ? `You are owed ${settings.currency}${myNet.toFixed(2)}` : `You owe ${settings.currency}${Math.abs(myNet).toFixed(2)}`}
 
                 </Text>
               </View>
@@ -640,7 +640,7 @@ export default function GroupDetailScreen() {
                         </Text>
                       </View>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: 'transparent' }}>
-                          <Text style={{ fontSize: 15, fontWeight: '800', color: colors.gain }}>{settings.currency}{d.amount.toFixed(0)}</Text>
+                          <Text style={{ fontSize: 15, fontWeight: '800', color: colors.gain }}>{settings.currency}{d.amount.toFixed(2)}</Text>
                           {d.toVpa && isViewerDebtor && (
                               <Pressable 
                                   onPress={async () => {
@@ -922,7 +922,7 @@ export default function GroupDetailScreen() {
                  <View style={{ marginBottom: 24, backgroundColor: 'transparent', gap: 12 }}>
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', backgroundColor: 'transparent' }}>
                        <Text style={{ color: colors.icon }}>Total Group Spending</Text>
-                       <Text style={{ color: colors.text, fontWeight: '700' }}>{settings.currency}{expenses.reduce((a, b) => a + (b.amount || 0), 0).toFixed(0)}</Text>
+                       <Text style={{ color: colors.text, fontWeight: '700' }}>{settings.currency}{expenses.reduce((a, b) => a + (b.amount || 0), 0).toFixed(2)}</Text>
                     </View>
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', backgroundColor: 'transparent' }}>
                        <Text style={{ color: colors.icon }}>Expenses Tracked</Text>
@@ -949,7 +949,7 @@ export default function GroupDetailScreen() {
                              </View>
                              <Text style={{ color: colors.text, flex: 1 }}>{m?.displayName}</Text>
                              <Text style={{ fontWeight: '700', color: bal > 0 ? colors.gain : colors.debt }}>
-                                {bal > 0 ? '+' : '-'}{settings.currency}{Math.abs(bal).toFixed(0)}
+                                {bal > 0 ? '+' : '-'}{settings.currency}{Math.abs(bal).toFixed(2)}
                              </Text>
                           </View>
                         );

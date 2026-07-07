@@ -105,7 +105,7 @@ export default function GroupsScreen() {
                   {myNet > 0 ? 'you are owed' : 'you owe'}
                 </Text>
                 <Text style={[styles.balanceAmount, { color: myNet > 0 ? colors.gain : colors.debt }]}>
-                  ₹{Math.abs(myNet).toFixed(0)}
+                  ₹{Math.abs(myNet).toFixed(2)}
                 </Text>
               </View>
             ) : (

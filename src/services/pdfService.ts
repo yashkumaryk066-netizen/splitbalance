@@ -144,7 +144,7 @@ export const generateGroupReport = async (groupName: string, members: any[], exp
               <div class="card" style="padding: 16px;">
                 <div style="font-size: 13px; font-weight: 700; color: #475569; margin-bottom: 4px;">${m.displayName}</div>
                 <div style="font-size: 18px; font-weight: 800; color: ${balances[m.id] >= 0 ? '#10b981' : '#ef4444'}">
-                  ${currency}${Math.abs(balances[m.id]).toFixed(0)}
+                  ${currency}${Math.abs(balances[m.id]).toFixed(2)}
                   <span style="font-size: 10px; font-weight: 600; opacity: 0.7;">${balances[m.id] >= 0 ? 'RECIEVABLE' : 'PAYABLE'}</span>
                 </div>
               </div>
@@ -161,7 +161,7 @@ export const generateGroupReport = async (groupName: string, members: any[], exp
                     <span style="color: #64748b; margin: 0 10px;">→</span>
                     <span style="font-weight: 700;">${d.to}</span>
                   </div>
-                  <div class="settlement-badge">${currency}${d.amount.toFixed(0)}</div>
+                  <div class="settlement-badge">${currency}${d.amount.toFixed(2)}</div>
                 </div>
               `).join('')}
               <p style="font-size: 11px; color: #3b82f6; margin-bottom: 0;">* These transfers minimize the number of payments required to settle all debts.</p>
@@ -278,7 +278,7 @@ export const generatePersonalMonthlyReport = async (userName: string, month: str
             </div>
             <div style="font-size: 14px; text-align: right; opacity: 0.9;">
               ${expenses.length} Shared Transactions<br/>
-              Average ${currency}${(totalSpent / (expenses.length || 1)).toFixed(0)} / expense
+              Average ${currency}${(totalSpent / (expenses.length || 1)).toFixed(2)} / expense
             </div>
           </div>
 

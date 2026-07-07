@@ -162,7 +162,7 @@ export default function AddExpenseModal() {
         const mData = mDocs
           .map((mDoc, index) => {
             if (mDoc.exists()) {
-              initialDetails[mIds[index]] = 0;
+              initialDetails[mIds[index]] = 1;
               return { id: mIds[index], ...mDoc.data() };
             }
             return null;
