@@ -250,6 +250,7 @@ export default function AddExpenseModal() {
   };
 
   const handleSave = async () => {
+    if (loading) return;
     if (!amount || !description || !user?.uid) return;
     const total = evaluateAmountString(amount);
     if (isNaN(total)) {

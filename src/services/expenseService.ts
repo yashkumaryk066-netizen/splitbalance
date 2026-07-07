@@ -92,6 +92,13 @@ export const removeMemberFromGroup = async (groupId: string, userId: string) => 
   });
 };
 
+export const renameGroup = async (groupId: string, newName: string) => {
+  const groupRef = doc(db, 'groups', groupId);
+  await updateDoc(groupRef, {
+    name: newName
+  });
+};
+
 export const deleteGroup = async (groupId: string) => {
   let batch = writeBatch(db);
   let batchCount = 0;

@@ -45,6 +45,9 @@ export default function GroupDetailScreen() {
   const [showCyclePicker, setShowCyclePicker] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [recordConfirm, setRecordConfirm] = useState<{from: string, fromId: string, to: string, toId: string, amount: number} | null>(null);
+  const [renameModalVisible, setRenameModalVisible] = useState(false);
+  const [newGroupName, setNewGroupName] = useState('');
+  const [isRenaming, setIsRenaming] = useState(false);
   
   const { user, settings } = useUserStore();
 
@@ -70,6 +73,7 @@ export default function GroupDetailScreen() {
   };
 
   const handleSettleUp = async () => {
+    if (settling) return;
     if (selectedPayees.length === 0) {
       showNotification('Please select at least one person', 'error');
       return;
@@ -386,6 +390,7 @@ export default function GroupDetailScreen() {
   };
 
   const handleAddMember = async () => {
+    if (addingMember) return;
     if (!memberEmail || !group) {
       if (!group) showNotification('Group not loaded', 'error');
       return;
@@ -503,9 +508,25 @@ export default function GroupDetailScreen() {
             }} style={{ marginRight: 12 }}>
               <ArrowLeft color={colors.text} size={24} />
             </Pressable>
-            <Text style={{ fontSize: 18, fontWeight: '600', color: colors.text }}>
-               {group?.name || 'Group'}
-            </Text>
+            <Pressable onPress={() => {
+              if (Platform.OS === 'web') {
+                const name = window.prompt('Enter new group name:', group?.name || '');
+                if (name && name.trim()) {
+                  setIsRenaming(true);
+                  renameGroup(id as string, name.trim())
+                    .then(() => showNotification('Group renamed', 'success'))
+                    .catch(() => showNotification('Failed to rename', 'error'))
+                    .finally(() => setIsRenaming(false));
+                }
+              } else {
+                setNewGroupName(group?.name || '');
+                setRenameModalVisible(true);
+              }
+            }}>
+              <Text style={{ fontSize: 18, fontWeight: '600', color: colors.text }}>
+                 {group?.name || 'Group'} <Text style={{ fontSize: 14, color: colors.icon }}>✎</Text>
+              </Text>
+            </Pressable>
           </View>
         ),
         headerRight: () => (
@@ -1310,6 +1331,48 @@ export default function GroupDetailScreen() {
                     }
                  }} style={{ flex: 1, paddingVertical: 14, borderRadius: 12, backgroundColor: colors.primary, alignItems: 'center', opacity: settling ? 0.7 : 1 }} disabled={settling}>
                     {settling ? <ActivityIndicator color="#fff" size="small" /> : <Text style={{ color: '#fff', fontWeight: '700' }}>Record</Text>}
+                 </Pressable>
+              </View>
+           </View>
+        </View>
+      </Modal>
+
+      {/* Rename Modal (Mobile Only, Web uses prompt) */}
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={renameModalVisible}
+        onRequestClose={() => setRenameModalVisible(false)}
+      >
+        <View style={[styles.modalOverlay, { justifyContent: 'center', alignItems: 'center' }]}>
+           <View style={{ backgroundColor: colors.cardBg, borderRadius: 24, padding: 24, width: '85%', maxWidth: 400 }}>
+              <Text style={{ fontSize: 20, fontWeight: '800', color: colors.text, marginBottom: 16 }}>Rename Group</Text>
+              <TextInput
+                 style={[styles.input, { color: colors.text, borderColor: colors.border }]}
+                 placeholder="New Group Name"
+                 placeholderTextColor={colors.icon}
+                 value={newGroupName}
+                 onChangeText={setNewGroupName}
+                 autoFocus
+              />
+              <View style={{ flexDirection: 'row', gap: 12, marginTop: 24 }}>
+                 <Pressable onPress={() => setRenameModalVisible(false)} style={{ flex: 1, paddingVertical: 14, borderRadius: 12, backgroundColor: colors.border, alignItems: 'center' }}>
+                    <Text style={{ color: colors.text, fontWeight: '700' }}>Cancel</Text>
+                 </Pressable>
+                 <Pressable onPress={async () => {
+                    if (isRenaming || !newGroupName.trim()) return;
+                    setIsRenaming(true);
+                    try {
+                      await renameGroup(id as string, newGroupName.trim());
+                      showNotification('Group renamed successfully', 'success');
+                      setRenameModalVisible(false);
+                    } catch (e) {
+                      showNotification('Error renaming group', 'error');
+                    } finally {
+                      setIsRenaming(false);
+                    }
+                 }} style={{ flex: 1, paddingVertical: 14, borderRadius: 12, backgroundColor: colors.primary, alignItems: 'center', opacity: (isRenaming || !newGroupName.trim()) ? 0.7 : 1 }} disabled={isRenaming || !newGroupName.trim()}>
+                    {isRenaming ? <ActivityIndicator color="#fff" size="small" /> : <Text style={{ color: '#fff', fontWeight: '700' }}>Save</Text>}
                  </Pressable>
               </View>
            </View>
