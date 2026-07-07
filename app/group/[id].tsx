@@ -358,15 +358,10 @@ export default function GroupDetailScreen() {
     );
     
     if (myDebts.length > 0) {
-      const initialPayees: string[] = [];
-      const initialAmounts: { [key: string]: string } = {};
-      myDebts.forEach(d => {
-         const pId = mode === 'paying' ? d.toId : d.fromId;
-         initialPayees.push(pId);
-         initialAmounts[pId] = d.amount.toFixed(2);
-      });
-      setSelectedPayees(initialPayees);
-      setSettleAmounts(initialAmounts);
+      const highestDebt = myDebts.sort((a, b) => b.amount - a.amount)[0];
+      const pId = mode === 'paying' ? highestDebt.toId : highestDebt.fromId;
+      setSelectedPayees([pId]);
+      setSettleAmounts({ [pId]: highestDebt.amount.toFixed(2) });
     } else {
       // Fallback if no direct optimized debt is found (rare)
       const fallback = members.filter(m => m.id !== user?.uid)[0];
