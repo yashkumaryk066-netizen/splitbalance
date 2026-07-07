@@ -44,6 +44,7 @@ export default function GroupDetailScreen() {
   const [selectedCycleId, setSelectedCycleId] = useState<string | null>(null);
   const [showCyclePicker, setShowCyclePicker] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [recordConfirm, setRecordConfirm] = useState<{from: string, fromId: string, to: string, toId: string, amount: number} | null>(null);
   
   const { user, settings } = useUserStore();
 
@@ -660,23 +661,7 @@ export default function GroupDetailScreen() {
                               </Pressable>
                           )}
                           <Pressable 
-                              onPress={() => {
-                                 Alert.alert(
-                                    'Record Cash Payment',
-                                    `Mark ${settings.currency}${d.amount.toFixed(2)} as paid from ${d.from} to ${d.to}?`,
-                                    [
-                                      { text: 'Cancel', style: 'cancel' },
-                                      { text: 'Record', onPress: async () => {
-                                         try {
-                                           await addPayment(d.fromId, d.toId, d.amount, id as string, group?.currentCycleId || 'uncategorized', d.from, d.to);
-                                           showNotification('Payment recorded successfully', 'success');
-                                         } catch (e) {
-                                           showNotification('Error recording payment', 'error');
-                                         }
-                                      }}
-                                    ]
-                                 );
-                              }}
+                              onPress={() => setRecordConfirm(d)}
                               style={{ backgroundColor: colors.border, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}
                           >
                               <Text style={{ color: colors.text, fontSize: 10, fontWeight: '800' }}>RECORD</Text>
@@ -1260,6 +1245,46 @@ export default function GroupDetailScreen() {
                     ]);
                  }} style={{ paddingVertical: 16, backgroundColor: 'transparent' }}>
                     <Text style={{ fontSize: 16, color: colors.debt, fontWeight: '700' }}>Delete Group</Text>
+                 </Pressable>
+              </View>
+           </View>
+        </View>
+      </Modal>
+
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={!!recordConfirm}
+        onRequestClose={() => setRecordConfirm(null)}
+      >
+        <View style={[styles.modalOverlay, { justifyContent: 'center', alignItems: 'center' }]}>
+           <Pressable style={StyleSheet.absoluteFill} onPress={() => setRecordConfirm(null)} />
+           <View style={{ backgroundColor: colors.cardBg, borderRadius: 24, padding: 24, width: '85%', maxWidth: 400, alignItems: 'center' }}>
+              <View style={{ width: 60, height: 60, borderRadius: 30, backgroundColor: colors.primary + '15', justifyContent: 'center', alignItems: 'center', marginBottom: 16 }}>
+                 <Wallet size={32} color={colors.primary} />
+              </View>
+              <Text style={{ fontSize: 20, fontWeight: '800', color: colors.text, marginBottom: 8 }}>Record Payment</Text>
+              <Text style={{ fontSize: 15, color: colors.icon, textAlign: 'center', marginBottom: 24 }}>
+                 Mark <Text style={{ fontWeight: '700', color: colors.text }}>{settings.currency}{recordConfirm?.amount?.toFixed(2)}</Text> as paid from <Text style={{ fontWeight: '700', color: colors.text }}>{recordConfirm?.from}</Text> to <Text style={{ fontWeight: '700', color: colors.text }}>{recordConfirm?.to}</Text>?
+              </Text>
+              <View style={{ flexDirection: 'row', gap: 12, width: '100%' }}>
+                 <Pressable onPress={() => setRecordConfirm(null)} style={{ flex: 1, paddingVertical: 14, borderRadius: 12, backgroundColor: colors.border, alignItems: 'center' }}>
+                    <Text style={{ color: colors.text, fontWeight: '700' }}>Cancel</Text>
+                 </Pressable>
+                 <Pressable onPress={async () => {
+                    if (!recordConfirm) return;
+                    setSettling(true);
+                    try {
+                      await addPayment(recordConfirm.fromId, recordConfirm.toId, recordConfirm.amount, id as string, group?.currentCycleId || 'uncategorized', recordConfirm.from, recordConfirm.to);
+                      showNotification('Payment recorded successfully', 'success');
+                      setRecordConfirm(null);
+                    } catch (e) {
+                      showNotification('Error recording payment', 'error');
+                    } finally {
+                      setSettling(false);
+                    }
+                 }} style={{ flex: 1, paddingVertical: 14, borderRadius: 12, backgroundColor: colors.primary, alignItems: 'center', opacity: settling ? 0.7 : 1 }} disabled={settling}>
+                    {settling ? <ActivityIndicator color="#fff" size="small" /> : <Text style={{ color: '#fff', fontWeight: '700' }}>Record</Text>}
                  </Pressable>
               </View>
            </View>
