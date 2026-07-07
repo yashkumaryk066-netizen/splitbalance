@@ -32,6 +32,7 @@ export default function GroupDetailScreen() {
   const [contactSearch, setContactSearch] = useState('');
   const [settleModalVisible, setSettleModalVisible] = useState(false);
   const [settleAmount, setSettleAmount] = useState('');
+  const [settleMode, setSettleMode] = useState<'paying' | 'receiving'>('paying');
   const [selectedPayee, setSelectedPayee] = useState<any>(null);
   const [settling, setSettling] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -74,7 +75,11 @@ export default function GroupDetailScreen() {
     }
     setSettling(true);
     try {
-      await addPayment(user!.uid, selectedPayee.id, totalSettleAmount, id as string, group?.currentCycleId || 'uncategorized', user!.displayName || 'You', selectedPayee.displayName);
+      if (settleMode === 'receiving') {
+        await addPayment(selectedPayee.id, user!.uid, totalSettleAmount, id as string, group?.currentCycleId || 'uncategorized', selectedPayee.displayName, user!.displayName || 'You');
+      } else {
+        await addPayment(user!.uid, selectedPayee.id, totalSettleAmount, id as string, group?.currentCycleId || 'uncategorized', user!.displayName || 'You', selectedPayee.displayName);
+      }
       showNotification('Payment recorded!', 'success');
       setSettleModalVisible(false);
       setSettleAmount('');
@@ -98,12 +103,13 @@ export default function GroupDetailScreen() {
       else if (bal > 0.1) creditors.push({ ...member, balance: bal });
     });
 
-    const optimized: { from: string, to: string, amount: number, toId: string, toVpa?: string }[] = [];
+    const optimized: { from: string, fromId: string, to: string, amount: number, toId: string, toVpa?: string }[] = [];
     let i = 0, j = 0;
     while (i < debtors.length && j < creditors.length) {
       const amount = Math.min(debtors[i].balance, creditors[j].balance);
       optimized.push({ 
         from: debtors[i].displayName, 
+        fromId: debtors[i].id,
         to: creditors[j].displayName, 
         amount,
         toId: creditors[j].id,
@@ -320,27 +326,26 @@ export default function GroupDetailScreen() {
     const metrics = calculateGroupMetrics(expenses, members);
     const myNet = metrics[user?.uid || ''] || 0;
     
-    if (Math.abs(myNet) < 1) {
+    if (Math.abs(myNet) < 0.1) {
       showNotification('You are already settled up!', 'info');
       return;
     }
 
-    const isOwed = myNet > 0;
-    if (isOwed) {
-      showNotification('Wait for others to pay you or tell them to Settle Up!', 'info');
-      return;
-    }
+    const mode = myNet > 0 ? 'receiving' : 'paying';
+    setSettleMode(mode);
 
-    const myDebts = calculateDebts().filter(d => d.from === user?.displayName || d.from === 'You');
+    const myDebts = calculateDebts().filter(d => 
+       mode === 'paying' ? d.fromId === user?.uid : d.toId === user?.uid
+    );
     
     if (myDebts.length > 0) {
       const highestDebt = myDebts.sort((a, b) => b.amount - a.amount)[0];
-      const payee = members.find(m => m.id === highestDebt.toId);
+      const payee = members.find(m => m.id === (mode === 'paying' ? highestDebt.toId : highestDebt.fromId));
       setSelectedPayee(payee);
       setSettleAmount(highestDebt.amount.toFixed(2));
     } else {
       // Fallback if no direct optimized debt is found (rare)
-      setSelectedPayee(members.filter(m => m.id !== user?.uid).sort((a,b) => (metrics[b.id]||0) - (metrics[a.id]||0))[0]);
+      setSelectedPayee(members.filter(m => m.id !== user?.uid)[0]);
       setSettleAmount(Math.abs(myNet).toFixed(2));
     }
     setSettleModalVisible(true);
@@ -531,7 +536,7 @@ export default function GroupDetailScreen() {
           {(() => {
             const metrics = calculateGroupMetrics(expenses, members);
             const myNet = metrics[user?.uid || ''] || 0;
-            if (myNet < -0.1) {
+            if (Math.abs(myNet) >= 0.1) {
               return (
                 <Pressable onPress={handleSettleUpMain} style={[styles.settleButton, { backgroundColor: colors.primary }]}>
                   <Text style={styles.settleText}>Settle Up</Text>
@@ -577,14 +582,14 @@ export default function GroupDetailScreen() {
           {(() => {
             const metrics = calculateGroupMetrics(expenses, members);
             const myNet = metrics[user?.uid || ''] || 0;
-            if (myNet < -0.1) {
+            if (Math.abs(myNet) >= 0.1) {
                return (
                   <Pressable 
-                    onPress={() => setSettleModalVisible(true)}
-                    style={[styles.actionButton, { backgroundColor: colors.gain }]}
+                    onPress={handleSettleUpMain}
+                    style={[styles.actionButton, { backgroundColor: myNet >= 0 ? colors.gain : colors.gain }]}
                   >
                     <TrendingUp size={18} color="#fff" />
-                    <Text style={styles.actionButtonText}>Settle Up</Text>
+                    <Text style={styles.actionButtonText}>{myNet >= 0 ? 'Receive Cash' : 'Settle Up'}</Text>
                   </Pressable>
                );
             }
@@ -855,16 +860,20 @@ export default function GroupDetailScreen() {
         <View style={styles.modalOverlay}>
           <View style={[styles.modalContent, { backgroundColor: colors.background, paddingBottom: Math.max(insets.bottom, 24) }]}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Record a Payment</Text>
+              <Text style={styles.modalTitle}>{settleMode === 'receiving' ? 'Record a Receipt' : 'Record a Payment'}</Text>
               <Pressable onPress={() => setSettleModalVisible(false)}>
                 <X color={colors.text} size={24} />
               </Pressable>
             </View>
             <View style={styles.modalBody}>
-              <Text style={[styles.listTitle, { color: colors.icon, marginBottom: 12 }]}>Who are you paying?</Text>
+              <Text style={[styles.listTitle, { color: colors.icon, marginBottom: 12 }]}>{settleMode === 'receiving' ? 'Who paid you?' : 'Who are you paying?'}</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 20 }}>
                 {members.filter(m => m.id !== user?.uid).map((m) => {
-                  const debt = calculateDebts().find(d => (d.from === user?.displayName || d.from === 'You') && d.toId === m.id);
+                  const debt = calculateDebts().find(d => 
+                    settleMode === 'paying' 
+                      ? (d.fromId === user?.uid && d.toId === m.id)
+                      : (d.toId === user?.uid && d.fromId === m.id)
+                  );
                   const suggestion = debt ? debt.amount : 0;
                   
                   return (
@@ -896,7 +905,7 @@ export default function GroupDetailScreen() {
                       </View>
                       {suggestion > 0 && (
                         <Text style={{ fontSize: 11, color: selectedPayee?.id === m.id ? '#ffffffCC' : colors.gain, marginTop: 4, fontWeight: '600' }}>
-                          Owe: {settings.currency}{suggestion.toFixed(2)}
+                          {settleMode === 'receiving' ? 'Expect' : 'Owe'}: {settings.currency}{suggestion.toFixed(2)}
                         </Text>
                       )}
                     </Pressable>
@@ -924,7 +933,7 @@ export default function GroupDetailScreen() {
                 onPress={handleSettleUp}
                 disabled={settling || !selectedPayee || !settleAmount}
               >
-                {settling ? <ActivityIndicator color="#fff" /> : <Text style={styles.actionButtonText}>Record Payment</Text>}
+                {settling ? <ActivityIndicator color="#fff" /> : <Text style={styles.actionButtonText}>{settleMode === 'receiving' ? 'Record Receipt' : 'Record Payment'}</Text>}
               </Pressable>
             </View>
           </View>
