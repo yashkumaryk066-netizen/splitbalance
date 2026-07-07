@@ -3,7 +3,7 @@ import { Text, View } from '@/components/Themed';
 import { useColorScheme } from '@/components/useColorScheme';
 import Colors from '@/constants/Colors';
 import { getPhoneContacts, MobileContact } from '@/src/services/contactService';
-import { addMemberToGroup, addPayment, closeCurrentCycle, createGhostUser, deleteExpense, deleteGroup, clearGroupHistory, findUserByEmail, findUserByPhone, removeMemberFromGroup, getGroupCycles, reopenCycle } from '@/src/services/expenseService';
+import { addMemberToGroup, addPayment, closeCurrentCycle, createGhostUser, deleteExpense, deleteGroup, clearGroupHistory, findUserByEmail, findUserByPhone, removeMemberFromGroup, getGroupCycles, reopenCycle, renameGroup } from '@/src/services/expenseService';
 import { calculateGroupMetrics } from '@/src/utils/expenseUtils';
 import { db } from '@/src/services/firebaseConfig';
 import { generateGroupReport } from '@/src/services/pdfService';
