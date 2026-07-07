@@ -509,19 +509,8 @@ export default function GroupDetailScreen() {
               <ArrowLeft color={colors.text} size={24} />
             </Pressable>
             <Pressable onPress={() => {
-              if (Platform.OS === 'web') {
-                const name = window.prompt('Enter new group name:', group?.name || '');
-                if (name && name.trim()) {
-                  setIsRenaming(true);
-                  renameGroup(id as string, name.trim())
-                    .then(() => showNotification('Group renamed', 'success'))
-                    .catch(() => showNotification('Failed to rename', 'error'))
-                    .finally(() => setIsRenaming(false));
-                }
-              } else {
-                setNewGroupName(group?.name || '');
-                setRenameModalVisible(true);
-              }
+              setNewGroupName(group?.name || '');
+              setRenameModalVisible(true);
             }}>
               <Text style={{ fontSize: 18, fontWeight: '600', color: colors.text }}>
                  {group?.name || 'Group'} <Text style={{ fontSize: 14, color: colors.icon }}>✎</Text>
@@ -719,21 +708,28 @@ export default function GroupDetailScreen() {
                       key={m.id} 
                       onPress={() => {
                         if (isMe) return; // Can't remove yourself from here (maybe add "Leave Group" later)
-                        Alert.alert(
-                          'Manage Member',
-                          `Remove ${displayName} from group?`,
-                          [
-                            { text: 'Cancel', style: 'cancel' },
-                            { text: 'Remove', style: 'destructive', onPress: async () => {
-                              try {
-                                await removeMemberFromGroup(id as string, m.id);
-                                showNotification('Member removed', 'success');
-                              } catch (err) {
-                                showNotification('Failed to remove member', 'error');
-                              }
-                            }}
-                          ]
-                        );
+                        
+                        const onConfirm = async () => {
+                          try {
+                            await removeMemberFromGroup(id as string, m.id);
+                            showNotification('Member removed', 'success');
+                          } catch (err) {
+                            showNotification('Failed to remove member', 'error');
+                          }
+                        };
+
+                        if (Platform.OS === 'web') {
+                          if (window.confirm(`Remove ${displayName} from group?`)) onConfirm();
+                        } else {
+                          Alert.alert(
+                            'Manage Member',
+                            `Remove ${displayName} from group?`,
+                            [
+                              { text: 'Cancel', style: 'cancel' },
+                              { text: 'Remove', style: 'destructive', onPress: onConfirm }
+                            ]
+                          );
+                        }
                       }}
                       style={styles.memberCard}
                     >
