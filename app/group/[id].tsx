@@ -31,9 +31,9 @@ export default function GroupDetailScreen() {
   const [showContacts, setShowContacts] = useState(false);
   const [contactSearch, setContactSearch] = useState('');
   const [settleModalVisible, setSettleModalVisible] = useState(false);
-  const [settleAmount, setSettleAmount] = useState('');
+  const [selectedPayees, setSelectedPayees] = useState<string[]>([]);
+  const [settleAmounts, setSettleAmounts] = useState<{ [key: string]: string }>({});
   const [settleMode, setSettleMode] = useState<'paying' | 'receiving'>('paying');
-  const [selectedPayee, setSelectedPayee] = useState<any>(null);
   const [settling, setSettling] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedExpense, setSelectedExpense] = useState<any>(null);
@@ -68,22 +68,41 @@ export default function GroupDetailScreen() {
   };
 
   const handleSettleUp = async () => {
-    const totalSettleAmount = evaluateAmountString(settleAmount);
-    if (!selectedPayee || isNaN(totalSettleAmount) || totalSettleAmount <= 0) {
-      showNotification('Please enter a valid amount', 'error');
+    if (selectedPayees.length === 0) {
+      showNotification('Please select at least one person', 'error');
       return;
     }
+    
+    // validate all amounts
+    let hasInvalid = false;
+    for (const pid of selectedPayees) {
+       const amt = evaluateAmountString(settleAmounts[pid]);
+       if (isNaN(amt) || amt <= 0) hasInvalid = true;
+    }
+    if (hasInvalid) {
+       showNotification('Please enter valid amounts for all selected', 'error');
+       return;
+    }
+
     setSettling(true);
     try {
-      if (settleMode === 'receiving') {
-        await addPayment(selectedPayee.id, user!.uid, totalSettleAmount, id as string, group?.currentCycleId || 'uncategorized', selectedPayee.displayName, user!.displayName || 'You');
-      } else {
-        await addPayment(user!.uid, selectedPayee.id, totalSettleAmount, id as string, group?.currentCycleId || 'uncategorized', user!.displayName || 'You', selectedPayee.displayName);
-      }
-      showNotification('Payment recorded!', 'success');
+      const promises = selectedPayees.map(async (payeeId) => {
+        const amt = evaluateAmountString(settleAmounts[payeeId]);
+        const payee = members.find(m => m.id === payeeId);
+        if (!payee) return;
+        
+        if (settleMode === 'receiving') {
+          return addPayment(payee.id, user!.uid, amt, id as string, group?.currentCycleId || 'uncategorized', payee.displayName, user!.displayName || 'You');
+        } else {
+          return addPayment(user!.uid, payee.id, amt, id as string, group?.currentCycleId || 'uncategorized', user!.displayName || 'You', payee.displayName);
+        }
+      });
+      await Promise.all(promises);
+
+      showNotification('Payments recorded!', 'success');
       setSettleModalVisible(false);
-      setSettleAmount('');
-      setSelectedPayee(null);
+      setSettleAmounts({});
+      setSelectedPayees([]);
     } catch (err) {
       showNotification('Failed to record payment', 'error');
     } finally {
@@ -339,14 +358,22 @@ export default function GroupDetailScreen() {
     );
     
     if (myDebts.length > 0) {
-      const highestDebt = myDebts.sort((a, b) => b.amount - a.amount)[0];
-      const payee = members.find(m => m.id === (mode === 'paying' ? highestDebt.toId : highestDebt.fromId));
-      setSelectedPayee(payee);
-      setSettleAmount(highestDebt.amount.toFixed(2));
+      const initialPayees: string[] = [];
+      const initialAmounts: { [key: string]: string } = {};
+      myDebts.forEach(d => {
+         const pId = mode === 'paying' ? d.toId : d.fromId;
+         initialPayees.push(pId);
+         initialAmounts[pId] = d.amount.toFixed(2);
+      });
+      setSelectedPayees(initialPayees);
+      setSettleAmounts(initialAmounts);
     } else {
       // Fallback if no direct optimized debt is found (rare)
-      setSelectedPayee(members.filter(m => m.id !== user?.uid)[0]);
-      setSettleAmount(Math.abs(myNet).toFixed(2));
+      const fallback = members.filter(m => m.id !== user?.uid)[0];
+      if (fallback) {
+        setSelectedPayees([fallback.id]);
+        setSettleAmounts({ [fallback.id]: Math.abs(myNet).toFixed(2) });
+      }
     }
     setSettleModalVisible(true);
   };
@@ -866,7 +893,7 @@ export default function GroupDetailScreen() {
         <View style={styles.modalOverlay}>
           <View style={[styles.modalContent, { backgroundColor: colors.background, paddingBottom: Math.max(insets.bottom, 24) }]}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>{settleMode === 'receiving' ? 'Record a Receipt' : 'Record a Payment'}</Text>
+              <Text style={styles.modalTitle}>{settleMode === 'receiving' ? 'Record Receipt(s)' : 'Record Payment(s)'}</Text>
               <Pressable onPress={() => setSettleModalVisible(false)}>
                 <X color={colors.text} size={24} />
               </Pressable>
@@ -881,21 +908,24 @@ export default function GroupDetailScreen() {
                       : (d.toId === user?.uid && d.fromId === m.id)
                   );
                   const suggestion = debt ? debt.amount : 0;
+                  const isSelected = selectedPayees.includes(m.id);
                   
                   return (
                     <Pressable
                       key={m.id}
                       onPress={() => {
-                        setSelectedPayee(m);
-                        if (suggestion > 0) {
-                          setSettleAmount(suggestion.toFixed(2));
+                        if (isSelected) {
+                           setSelectedPayees(prev => prev.filter(x => x !== m.id));
+                        } else {
+                           setSelectedPayees(prev => [...prev, m.id]);
+                           if (suggestion > 0) setSettleAmounts(prev => ({ ...prev, [m.id]: suggestion.toFixed(2) }));
                         }
                       }}
                       style={[
                         styles.payeeChip,
                         {
-                          backgroundColor: selectedPayee?.id === m.id ? colors.primary : colors.cardBg,
-                          borderColor: selectedPayee?.id === m.id ? colors.primary : colors.border,
+                          backgroundColor: isSelected ? colors.primary : colors.cardBg,
+                          borderColor: isSelected ? colors.primary : colors.border,
                           flexDirection: 'column',
                           alignItems: 'flex-start',
                           paddingVertical: 10,
@@ -903,14 +933,14 @@ export default function GroupDetailScreen() {
                         },
                       ]}
                     >
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                        <Text style={{ color: selectedPayee?.id === m.id ? '#fff' : colors.text, fontWeight: '600' }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'transparent' }}>
+                        <Text style={{ color: isSelected ? '#fff' : colors.text, fontWeight: '600' }}>
                           {m.displayName}
                         </Text>
-                        {selectedPayee?.id === m.id && <X size={14} color="#fff" />}
+                        {isSelected && <X size={14} color="#fff" />}
                       </View>
                       {suggestion > 0 && (
-                        <Text style={{ fontSize: 11, color: selectedPayee?.id === m.id ? '#ffffffCC' : colors.gain, marginTop: 4, fontWeight: '600' }}>
+                        <Text style={{ fontSize: 11, color: isSelected ? '#ffffffCC' : colors.gain, marginTop: 4, fontWeight: '600' }}>
                           {settleMode === 'receiving' ? 'Expect' : 'Owe'}: {settings.currency}{suggestion.toFixed(2)}
                         </Text>
                       )}
@@ -919,27 +949,44 @@ export default function GroupDetailScreen() {
                 })}
               </ScrollView>
 
-              <Text style={[styles.listTitle, { color: colors.icon, marginBottom: 12 }]}>Amount</Text>
-              <TextInput
-                style={[styles.input, { color: colors.text, borderColor: colors.border }]}
-                placeholder="Enter amount"
-                placeholderTextColor={colors.icon}
-                keyboardType={Platform.OS === 'ios' ? 'numbers-and-punctuation' : 'default'}
-                value={settleAmount}
-                onChangeText={setSettleAmount}
-              />
-              {settleAmount.match(/[+\-*/]/) && (
-                <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: colors.primary + '10', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 20, marginBottom: 12 }}>
-                    <Text style={{ color: colors.primary, fontWeight: '700', fontSize: 13 }}>Sum: {settings.currency}{evaluateAmountString(settleAmount).toFixed(2)}</Text>
+              {selectedPayees.length > 0 && (
+                <View style={{ marginBottom: 20, backgroundColor: 'transparent' }}>
+                  <Text style={[styles.listTitle, { color: colors.icon, marginBottom: 12 }]}>Amounts</Text>
+                  {selectedPayees.map(id => {
+                     const m = members.find(x => x.id === id);
+                     return (
+                       <View key={id} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12, backgroundColor: 'transparent' }}>
+                         <Text style={{ flex: 1, color: colors.text, fontWeight: '600' }}>{m?.displayName}</Text>
+                         <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'transparent' }}>
+                           <Text style={{ color: colors.icon, marginRight: 8 }}>{settings.currency}</Text>
+                           <TextInput
+                             style={[styles.input, { width: 120, marginBottom: 0, height: 44, borderColor: colors.border, color: colors.text }]}
+                             value={settleAmounts[id] || ''}
+                             onChangeText={(val) => setSettleAmounts(prev => ({ ...prev, [id]: val }))}
+                             keyboardType="decimal-pad"
+                             placeholder="0.00"
+                           />
+                         </View>
+                       </View>
+                     );
+                  })}
+                  {(() => {
+                    const total = selectedPayees.reduce((acc, id) => acc + (evaluateAmountString(settleAmounts[id]) || 0), 0);
+                    return (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: colors.primary + '10', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, marginTop: 8 }}>
+                          <Text style={{ color: colors.primary, fontWeight: '700', fontSize: 13 }}>Total: {settings.currency}{total.toFixed(2)}</Text>
+                      </View>
+                    );
+                  })()}
                 </View>
               )}
 
               <Pressable
-                style={[styles.actionButton, { backgroundColor: colors.primary }]}
+                style={[styles.actionButton, { backgroundColor: colors.primary, opacity: selectedPayees.length > 0 ? 1 : 0.5 }]}
                 onPress={handleSettleUp}
-                disabled={settling || !selectedPayee || !settleAmount}
+                disabled={settling || selectedPayees.length === 0}
               >
-                {settling ? <ActivityIndicator color="#fff" /> : <Text style={styles.actionButtonText}>{settleMode === 'receiving' ? 'Record Receipt' : 'Record Payment'}</Text>}
+                {settling ? <ActivityIndicator color="#fff" /> : <Text style={styles.actionButtonText}>{settleMode === 'receiving' ? 'Record Receipt(s)' : 'Record Payment(s)'}</Text>}
               </Pressable>
             </View>
           </View>
