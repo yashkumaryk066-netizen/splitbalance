@@ -3,7 +3,7 @@ import { Text, View } from '@/components/Themed';
 import { useColorScheme } from '@/components/useColorScheme';
 import Colors from '@/constants/Colors';
 import { getPhoneContacts, MobileContact } from '@/src/services/contactService';
-import { addMemberToGroup, addPayment, closeCurrentCycle, createGhostUser, deleteExpense, deleteGroup, findUserByEmail, findUserByPhone, removeMemberFromGroup, getGroupCycles, reopenCycle } from '@/src/services/expenseService';
+import { addMemberToGroup, addPayment, closeCurrentCycle, createGhostUser, deleteExpense, deleteGroup, clearGroupHistory, findUserByEmail, findUserByPhone, removeMemberFromGroup, getGroupCycles, reopenCycle } from '@/src/services/expenseService';
 import { calculateGroupMetrics } from '@/src/utils/expenseUtils';
 import { db } from '@/src/services/firebaseConfig';
 import { generateGroupReport } from '@/src/services/pdfService';
@@ -1205,6 +1205,22 @@ export default function GroupDetailScreen() {
                  </Pressable>
                  <Pressable onPress={() => { setShowSettingsModal(false); handleInvite(); }} style={{ paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: 'transparent' }}>
                     <Text style={{ fontSize: 16, color: colors.text, fontWeight: '600' }}>Invite Member</Text>
+                 </Pressable>
+                 <Pressable onPress={() => {
+                    setShowSettingsModal(false);
+                    Alert.alert('Clear All History', 'This will erase all expenses and settlements, but keep the group members. Are you sure?', [
+                      { text: 'Cancel', style: 'cancel' },
+                      { text: 'Clear History', style: 'destructive', onPress: async () => {
+                         try {
+                           await clearGroupHistory(id as string);
+                           showNotification('Group history cleared', 'success');
+                         } catch (e) {
+                           showNotification('Failed to clear history', 'error');
+                         }
+                      }}
+                    ]);
+                 }} style={{ paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: 'transparent' }}>
+                    <Text style={{ fontSize: 16, color: colors.debt, fontWeight: '600' }}>Clear All History</Text>
                  </Pressable>
                  <Pressable onPress={() => {
                     setShowSettingsModal(false);

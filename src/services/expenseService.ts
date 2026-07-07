@@ -140,6 +140,54 @@ export const deleteGroup = async (groupId: string) => {
   await commitBatch();
 };
 
+export const clearGroupHistory = async (groupId: string) => {
+  let batch = writeBatch(db);
+  let batchCount = 0;
+
+  const commitBatch = async () => {
+    if (batchCount > 0) {
+      await batch.commit();
+      batch = writeBatch(db);
+      batchCount = 0;
+    }
+  };
+
+  const addDeleteToBatch = async (ref: any) => {
+    batch.delete(ref);
+    batchCount++;
+    if (batchCount === 400) {
+      await commitBatch();
+    }
+  };
+  
+  // 1. Delete all expenses in this group & their photos
+  const q = query(collection(db, 'expenses'), where('groupId', '==', groupId));
+  const qSnap = await getDocs(q);
+  for (const d of qSnap.docs) {
+    const data = d.data();
+    if (data.receiptUrl && data.receiptUrl.includes('firebasestorage')) {
+        try {
+            const photoRef = ref(storage, data.receiptUrl);
+            await deleteObject(photoRef);
+        } catch (err) { /* silent fail if already gone */ }
+    }
+    await addDeleteToBatch(doc(db, 'expenses', d.id));
+  }
+
+  // 2. Delete all cycles for this group
+  const cyclesQ = query(collection(db, 'cycles'), where('groupId', '==', groupId));
+  const cyclesSnap = await getDocs(cyclesQ);
+  for (const c of cyclesSnap.docs) {
+    await addDeleteToBatch(doc(db, 'cycles', c.id));
+  }
+  
+  // 3. Reset group's currentCycleId
+  batch.update(doc(db, 'groups', groupId), { currentCycleId: null });
+  batchCount++;
+
+  await commitBatch();
+};
+
 export const updateExpense = async (expenseId: string, expenseData: Partial<ExpenseData>) => {
   const expenseRef = doc(db, 'expenses', expenseId);
   await updateDoc(expenseRef, {
