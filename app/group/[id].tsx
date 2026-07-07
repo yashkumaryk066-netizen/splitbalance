@@ -491,16 +491,22 @@ export default function GroupDetailScreen() {
       <Stack.Screen options={{ 
         title: group?.name || 'Group', 
         headerShown: true,
+        headerTitle: () => null,
         headerLeft: () => (
-          <Pressable onPress={() => {
-            if (router.canGoBack()) {
-              router.back();
-            } else {
-              router.replace('/(tabs)/groups');
-            }
-          }} style={{ marginRight: 16 }}>
-            <ArrowLeft color={colors.text} size={24} />
-          </Pressable>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Pressable onPress={() => {
+              if (router.canGoBack()) {
+                router.back();
+              } else {
+                router.replace('/(tabs)/groups');
+              }
+            }} style={{ marginRight: 12 }}>
+              <ArrowLeft color={colors.text} size={24} />
+            </Pressable>
+            <Text style={{ fontSize: 18, fontWeight: '600', color: colors.text }}>
+               {group?.name || 'Group'}
+            </Text>
+          </View>
         ),
         headerRight: () => (
           <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'transparent' }}>
@@ -1193,17 +1199,22 @@ export default function GroupDetailScreen() {
                  </Pressable>
                  <Pressable onPress={() => {
                     setShowSettingsModal(false);
-                    Alert.alert('Clear All History', 'This will erase all expenses and settlements, but keep the group members. Are you sure?', [
-                      { text: 'Cancel', style: 'cancel' },
-                      { text: 'Clear History', style: 'destructive', onPress: async () => {
+                    const onConfirm = async () => {
                          try {
                            await clearGroupHistory(id as string);
                            showNotification('Group history cleared', 'success');
                          } catch (e) {
                            showNotification('Failed to clear history', 'error');
                          }
-                      }}
-                    ]);
+                    };
+                    if (Platform.OS === 'web') {
+                      if (window.confirm('This will erase all expenses and settlements, but keep the group members. Are you sure?')) onConfirm();
+                    } else {
+                      Alert.alert('Clear All History', 'This will erase all expenses and settlements, but keep the group members. Are you sure?', [
+                        { text: 'Cancel', style: 'cancel' },
+                        { text: 'Clear History', style: 'destructive', onPress: onConfirm }
+                      ]);
+                    }
                  }} style={{ paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: 'transparent' }}>
                     <Text style={{ fontSize: 16, color: colors.debt, fontWeight: '600' }}>Clear All History</Text>
                  </Pressable>
@@ -1212,28 +1223,35 @@ export default function GroupDetailScreen() {
                     const metrics = calculateGroupMetrics(expenses, members);
                     const myNet = metrics[user?.uid || ''] || 0;
                     if (Math.abs(myNet) > 0.1) {
-                      Alert.alert('Cannot Leave', 'Please settle your balances (you owe or are owed money) before leaving the group.');
+                      if (Platform.OS === 'web') {
+                        window.alert('Cannot Leave: Please settle your balances (you owe or are owed money) before leaving the group.');
+                      } else {
+                        Alert.alert('Cannot Leave', 'Please settle your balances (you owe or are owed money) before leaving the group.');
+                      }
                       return;
                     }
-                    Alert.alert('Leave Group', 'Are you sure you want to leave this group?', [
-                      { text: 'Cancel', style: 'cancel' },
-                      { text: 'Leave', style: 'destructive', onPress: async () => {
+                    const onConfirm = async () => {
                          try {
                            await removeMemberFromGroup(id as string, user!.uid);
                            router.replace('/(tabs)/groups');
                          } catch (e) {
                            showNotification('Failed to leave group', 'error');
                          }
-                      }}
-                    ]);
+                    };
+                    if (Platform.OS === 'web') {
+                      if (window.confirm('Are you sure you want to leave this group?')) onConfirm();
+                    } else {
+                      Alert.alert('Leave Group', 'Are you sure you want to leave this group?', [
+                        { text: 'Cancel', style: 'cancel' },
+                        { text: 'Leave', style: 'destructive', onPress: onConfirm }
+                      ]);
+                    }
                  }} style={{ paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: 'transparent' }}>
                     <Text style={{ fontSize: 16, color: colors.debt, fontWeight: '600' }}>Leave Group</Text>
                  </Pressable>
                  <Pressable onPress={() => {
                     setShowSettingsModal(false);
-                    Alert.alert('Delete Group', 'This will erase ALL data, expenses, and cycles. Continue?', [
-                      { text: 'Cancel', style: 'cancel' },
-                      { text: 'Delete', style: 'destructive', onPress: async () => {
+                    const onConfirm = async () => {
                         try {
                           await deleteGroup(id as string);
                           showNotification('Group deleted', 'success');
@@ -1241,8 +1259,15 @@ export default function GroupDetailScreen() {
                         } catch (e) {
                           showNotification('Failed to delete group (Maybe too many expenses, or permissions)', 'error');
                         }
-                      }}
-                    ]);
+                    };
+                    if (Platform.OS === 'web') {
+                      if (window.confirm('This will erase ALL data, expenses, and cycles. Continue?')) onConfirm();
+                    } else {
+                      Alert.alert('Delete Group', 'This will erase ALL data, expenses, and cycles. Continue?', [
+                        { text: 'Cancel', style: 'cancel' },
+                        { text: 'Delete', style: 'destructive', onPress: onConfirm }
+                      ]);
+                    }
                  }} style={{ paddingVertical: 16, backgroundColor: 'transparent' }}>
                     <Text style={{ fontSize: 16, color: colors.debt, fontWeight: '700' }}>Delete Group</Text>
                  </Pressable>
