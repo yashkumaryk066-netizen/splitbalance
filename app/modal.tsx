@@ -61,6 +61,7 @@ export default function AddExpenseModal() {
   const colorScheme = useColorScheme() ?? 'light';
   const colors = Colors[colorScheme];
   const insets = useSafeAreaInsets();
+  const isUserChange = React.useRef(false);
 
   const isValid = useMemo(() => {
     if (!amount || !description) return false;
@@ -162,7 +163,6 @@ export default function AddExpenseModal() {
         const mData = mDocs
           .map((mDoc, index) => {
             if (mDoc.exists()) {
-              initialDetails[mIds[index]] = 1;
               return { id: mIds[index], ...mDoc.data() };
             }
             return null;
@@ -170,7 +170,23 @@ export default function AddExpenseModal() {
           .filter(m => m !== null);
 
         setGroupMembers(mData);
-        setSplitDetails(initialDetails);
+        setSplitDetails(prev => {
+          const next: { [key: string]: number } = {};
+          if (isUserChange.current || !expenseId) {
+            // User explicitly changed the group or it's a new expense -> Reset to included
+            mIds.forEach((id: string) => next[id] = 1);
+          } else {
+            // Initial load of an edited expense -> Merge
+            mIds.forEach((id: string) => {
+              if (prev[id] !== undefined) {
+                next[id] = prev[id];
+              } else {
+                next[id] = 0; // Excluded in the database
+              }
+            });
+          }
+          return next;
+        });
       }
     } catch (err) {
       console.error("Error loading members:", err);
@@ -453,7 +469,7 @@ export default function AddExpenseModal() {
           <Text style={[styles.label, { color: colors.icon }]}>Group</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             <Pressable 
-              onPress={() => setGroupId('')}
+              onPress={() => { isUserChange.current = true; setGroupId(''); }}
               style={[
                 styles.categoryChip, 
                 { 
@@ -468,7 +484,7 @@ export default function AddExpenseModal() {
             {groups.map((g) => (
               <Pressable 
                 key={g.id} 
-                onPress={() => setGroupId(g.id)}
+                onPress={() => { isUserChange.current = true; setGroupId(g.id); }}
                 style={[
                   styles.categoryChip, 
                   { 
