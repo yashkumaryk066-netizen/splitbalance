@@ -659,6 +659,28 @@ export default function GroupDetailScreen() {
                                   <Text style={{ color: '#fff', fontSize: 10, fontWeight: '900' }}>PAY UPI</Text>
                               </Pressable>
                           )}
+                          <Pressable 
+                              onPress={() => {
+                                 Alert.alert(
+                                    'Record Cash Payment',
+                                    `Mark ${settings.currency}${d.amount.toFixed(2)} as paid from ${d.from} to ${d.to}?`,
+                                    [
+                                      { text: 'Cancel', style: 'cancel' },
+                                      { text: 'Record', onPress: async () => {
+                                         try {
+                                           await addPayment(d.fromId, d.toId, d.amount, id as string, group?.currentCycleId || 'uncategorized', d.from, d.to);
+                                           showNotification('Payment recorded successfully', 'success');
+                                         } catch (e) {
+                                           showNotification('Error recording payment', 'error');
+                                         }
+                                      }}
+                                    ]
+                                 );
+                              }}
+                              style={{ backgroundColor: colors.border, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}
+                          >
+                              <Text style={{ color: colors.text, fontSize: 10, fontWeight: '800' }}>RECORD</Text>
+                          </Pressable>
                       </View>
                     </View>
                   );
